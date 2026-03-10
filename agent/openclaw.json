@@ -1,0 +1,25 @@
+{
+  "skills": {
+    "entries": {
+      "sentinel_credit": {
+        "enabled": true,
+        "env": {
+          "SENTINEL_API_URL": "http://localhost:3000"
+        }
+      },
+      "sentinel_lending": {
+        "enabled": true,
+        "env": {
+          "SENTINEL_API_URL": "http://localhost:3000"
+        }
+      },
+      "sentinel_recovery": {
+        "enabled": true,
+        "env": {
+          "SENTINEL_API_URL": "http://localhost:3000",
+          "TELEGRAM_BOT_TOKEN": ""
+        }
+      }
+    }
+  }
+}
