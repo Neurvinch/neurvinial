@@ -1,0 +1,38 @@
+{
+  "name": "sentinel",
+  "version": "0.1.0",
+  "description": "Autonomous AI Lending Agent for the Agent Economy",
+  "main": "core/index.js",
+  "scripts": {
+    "dev": "nodemon core/index.js",
+    "start": "node core/index.js",
+    "monitor": "node core/monitor/daemon.js",
+    "test": "jest --verbose",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:integration": "jest --testPathPattern=tests/integration"
+  },
+  "dependencies": {
+    "groq-sdk": "^0.5.0",
+    "@tetherto/wdk": "^1.0.0-beta.6",
+    "@tetherto/wdk-wallet-evm": "^1.0.0-beta.8",
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^8.0.0",
+    "joi": "^17.13.0",
+    "mongoose": "^8.8.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "uuid": "^10.0.0",
+    "winston": "^3.15.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.0",
+    "supertest": "^7.0.0"
+  },
+  "keywords": ["sentinel", "lending", "agent", "wdk", "usdt", "credit-scoring"],
+  "license": "MIT"
+}
