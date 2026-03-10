@@ -64,8 +64,16 @@ app.use(errorHandler);
 async function start() {
   try {
     // Connect to MongoDB Atlas
-    await mongoose.connect(config.db.uri);
-    logger.info('Connected to MongoDB Atlas');
+    try {
+      await mongoose.connect(config.db.uri);
+      logger.info('Connected to MongoDB Atlas');
+    } catch (dbErr) {
+      if (config.server.env === 'development') {
+        logger.warn('MongoDB connection failed, running in demo mode', { error: dbErr.message });
+      } else {
+        throw dbErr;
+      }
+    }
 
     // Initialize WDK wallet
     await walletManager.initialize();
