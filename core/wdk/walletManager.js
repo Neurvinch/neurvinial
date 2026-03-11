@@ -29,14 +29,26 @@ const state = {
 };
 
 /**
+ * Check if seed phrase looks like a valid BIP39 mnemonic (12 or 24 words).
+ * Simple heuristic: valid mnemonic contains only lowercase letters and spaces.
+ */
+function isValidMnemonicFormat(phrase) {
+  if (!phrase || typeof phrase !== 'string') return false;
+  const words = phrase.trim().split(/\s+/);
+  const isValidLength = words.length === 12 || words.length === 24;
+  const isValidWords   = words.every(w => /^[a-z]+$/.test(w));
+  return isValidLength && isValidWords;
+}
+
+/**
  * Initialize the WDK with the seed phrase from config.
  * Must be called once at server startup before any wallet operations.
  */
 async function initialize() {
   if (state.initialized) return;
 
-  if (!config.wdk.seedPhrase) {
-    logger.warn('WDK_SEED_PHRASE not set — wallet operations will be simulated');
+  if (!config.wdk.seedPhrase || !isValidMnemonicFormat(config.wdk.seedPhrase)) {
+    logger.warn('WDK_SEED_PHRASE not configured or invalid — wallet operations will be simulated');
     state.initialized = true;
     return;
   }
@@ -64,7 +76,7 @@ async function initialize() {
 
     state.initialized = true;
   } catch (err) {
-    logger.error('WDK initialization failed', { error: err.message });
+    logger.warn('WDK initialization failed, using simulation mode', { error: err.message });
     // Don't crash — allow server to start in simulation mode
     state.initialized = true;
   }

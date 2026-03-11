@@ -54,7 +54,7 @@ export default function CapitalSection() {
     setLoading(true); setError('');
     try {
       const res = await api.capitalStatus();
-      setData(res);
+      setData(res.data);  // Extract from API response envelope
     } catch (e) {
       setError(e.message);
     } finally {

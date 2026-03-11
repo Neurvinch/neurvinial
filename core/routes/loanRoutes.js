@@ -3,57 +3,146 @@
 // ============================================
 // POST /loans/request      — Submit a loan request
 // GET  /loans/:id/status   — Poll loan status
-// POST /loans/:id/repay    — Trigger repayment
 // POST /loans/:id/disburse — Disburse an approved loan
+// POST /loans/:id/repay    — Process repayment
 
-const express = require('express');
-const Joi = require('joi');
+const express  = require('express');
+const Joi      = require('joi');
+const mongoose = require('mongoose');
 const validateRequest = require('../middleware/validateRequest');
-const loanService = require('../loans/loanService');
-const logger = require('../config/logger');
+const loanService     = require('../loans/loanService');
+const { calculateCreditScore } = require('../scoring/scoreEngine');
+const demo            = require('../demo/demoStore');
+const { RISK_TIERS }  = require('../utils/constants');
+const logger          = require('../config/logger');
 
 const router = express.Router();
 
-// ---- Validation Schemas ----
+function dbReady() { return mongoose.connection.readyState === 1; }
+
 const loanRequestSchema = Joi.object({
-  did: Joi.string().required().messages({
-    'any.required': 'Agent DID is required'
-  }),
-  amount: Joi.number().positive().max(10000).required().messages({
-    'number.positive': 'Loan amount must be positive',
-    'number.max': 'Maximum loan amount is 10,000 USDT',
-    'any.required': 'Loan amount is required'
-  }),
-  purpose: Joi.string().max(500).optional()
+  did:     Joi.string().required(),
+  amount:  Joi.number().positive().max(10000).required(),
+  purpose: Joi.string().max(500).optional(),
 });
 
-const repaySchema = Joi.object({
-  txHash: Joi.string().optional() // Optional: if borrower provides their repayment tx hash
-});
+const repaySchema = Joi.object({ txHash: Joi.string().optional() });
 
 // ---- POST /loans/request ----
-// Submit a loan request. Sentinel scores and approves/denies immediately.
 router.post('/request', validateRequest(loanRequestSchema), async (req, res, next) => {
   try {
     const { did, amount, purpose } = req.body;
-    const result = await loanService.requestLoan({ did, amount, purpose });
 
-    const statusCode = result.decision === 'approved' ? 201 : 200;
+    // ── Live MongoDB path ──────────────────────────────────────
+    if (dbReady()) {
+      const result     = await loanService.requestLoan({ did, amount, purpose });
+      const statusCode = result.decision === 'approved' ? 201 : 200;
+      return res.status(statusCode).json({
+        success: true,
+        data: {
+          decision: result.decision,
+          loanId:   result.loan.loanId,
+          reason:   result.reason,
+          terms:    result.terms,
+          scoring: {
+            mlScore:           result.loan.mlScore,
+            llmScore:          result.loan.llmScore,
+            combinedScore:     result.loan.combinedScore,
+            defaultProbability:result.loan.defaultProbability,
+            tier:              result.loan.tier,
+            reasoning:         result.loan.decisionReasoning,
+          }
+        }
+      });
+    }
 
-    res.status(statusCode).json({
+    // ── Demo path ──────────────────────────────────────────────
+    // 1. Find agent in demo store
+    const agent = demo.findAgentByDid(did);
+    if (!agent) {
+      return res.status(404).json({ error: { message: 'Agent not found. Register first at POST /agents/register', code: 'AGENT_NOT_FOUND' } });
+    }
+    if (agent.isBlacklisted) {
+      return res.status(403).json({ error: { message: 'Agent is blacklisted', code: 'BLACKLISTED' } });
+    }
+
+    // 2. Use agent's stored creditScore to determine tier (avoids ML scoring 0-history as Tier D)
+    //    Full ML+LLM scoring only kicks in once the agent has real loan history.
+    const { getTierFromScore } = require('../utils/tierCalculator');
+    const tierObj     = getTierFromScore(agent.creditScore);
+    const tier        = tierObj.tierLetter;
+    const tierConfig  = RISK_TIERS[tier];
+    const scoreResult = {
+      mlScore:           agent.creditScore,
+      llmScore:          agent.creditScore,
+      combinedScore:     agent.creditScore,
+      defaultProbability:1 - agent.creditScore / 100,
+      reasoning:         `Demo mode: credit score ${agent.creditScore} → Tier ${tier}`,
+    };
+
+    // 3. Enforce tier limits
+    if (tier === 'D') {
+      return res.status(200).json({
+        success: true,
+        data: {
+          decision: 'denied',
+          reason:   'Tier D — credit score too low for lending.',
+          scoring:  { combinedScore: scoreResult.combinedScore, tier, reasoning: scoreResult.reasoning },
+        }
+      });
+    }
+    if (amount > tierConfig.maxLoan) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          decision: 'denied',
+          reason:   `Amount ${amount} USDT exceeds Tier ${tier} limit of ${tierConfig.maxLoan} USDT.`,
+          scoring:  { combinedScore: scoreResult.combinedScore, tier },
+        }
+      });
+    }
+
+    // 4. Create loan in demo store
+    const loan = demo.createLoan({
+      borrowerDid:        did,
+      amount,
+      purpose:            purpose || 'general',
+      mlScore:            scoreResult.mlScore,
+      llmScore:           scoreResult.llmScore,
+      combinedScore:      scoreResult.combinedScore,
+      defaultProbability: scoreResult.defaultProbability,
+      tier,
+      apr:                tierConfig.apr * 100,  // store as percent (e.g. 4, not 0.04)
+      collateral:         Math.round(amount * (tierConfig.collateralPct || 0)),
+      durationDays:       30,
+      decisionReasoning:  scoreResult.reasoning,
+    });
+
+    // 5. Update agent stats
+    demo.updateAgent(did, { totalLoans: agent.totalLoans + 1 });
+
+    logger.info('[demo] Loan approved', { loanId: loan.loanId, tier, amount });
+
+    return res.status(201).json({
       success: true,
       data: {
-        decision: result.decision,
-        loanId: result.loan.loanId,
-        reason: result.reason || undefined,
-        terms: result.terms || undefined,
+        decision: 'approved',
+        loanId:   loan.loanId,
+        terms: {
+          amount:      loan.amount,
+          apr:         loan.apr,
+          durationDays:loan.durationDays,
+          collateral:  loan.collateral,
+          totalDue:    loan.totalDue,
+          dueDate:     loan.dueDate,
+        },
         scoring: {
-          mlScore: result.loan.mlScore,
-          llmScore: result.loan.llmScore,
-          combinedScore: result.loan.combinedScore,
-          defaultProbability: result.loan.defaultProbability,
-          tier: result.loan.tier,
-          reasoning: result.loan.decisionReasoning
+          mlScore:           scoreResult.mlScore,
+          llmScore:          scoreResult.llmScore,
+          combinedScore:     scoreResult.combinedScore,
+          defaultProbability:scoreResult.defaultProbability,
+          tier,
+          reasoning:         scoreResult.reasoning,
         }
       }
     });
@@ -63,55 +152,43 @@ router.post('/request', validateRequest(loanRequestSchema), async (req, res, nex
 });
 
 // ---- GET /loans/:id/status ----
-// Poll the status of a loan.
 router.get('/:id/status', async (req, res, next) => {
   try {
-    const loan = await loanService.getLoanStatus(req.params.id);
-
-    if (!loan) {
-      return res.status(404).json({
-        error: { message: 'Loan not found', code: 'LOAN_NOT_FOUND' }
-      });
+    if (dbReady()) {
+      const loan = await loanService.getLoanStatus(req.params.id);
+      if (!loan) return res.status(404).json({ error: { message: 'Loan not found', code: 'LOAN_NOT_FOUND' } });
+      return res.json({ success: true, data: loan });
     }
 
-    res.json({
-      success: true,
-      data: {
-        loanId: loan.loanId,
-        status: loan.status,
-        borrowerDid: loan.borrowerDid,
-        amount: loan.amount,
-        tier: loan.tier,
-        apr: loan.apr,
-        totalDue: loan.totalDue,
-        dueDate: loan.dueDate,
-        disbursementTxHash: loan.disbursementTxHash,
-        repaymentTxHash: loan.repaymentTxHash,
-        createdAt: loan.createdAt
-      }
-    });
+    // Demo path
+    const loan = demo.findLoanById(req.params.id);
+    if (!loan) return res.status(404).json({ error: { message: 'Loan not found (demo mode)', code: 'LOAN_NOT_FOUND' } });
+    return res.json({ success: true, data: loan });
   } catch (err) {
     next(err);
   }
 });
 
 // ---- POST /loans/:id/disburse ----
-// Disburse an approved loan. Sends USDT on-chain via WDK.
 router.post('/:id/disburse', async (req, res, next) => {
   try {
-    const result = await loanService.disburseLoan(req.params.id);
+    if (dbReady()) {
+      const result = await loanService.disburseLoan(req.params.id);
+      return res.json({ success: true, data: result });
+    }
 
-    res.json({
+    // Demo path
+    const loan = demo.findLoanById(req.params.id);
+    if (!loan) return res.status(404).json({ error: { message: 'Loan not found', code: 'LOAN_NOT_FOUND' } });
+    if (loan.status !== 'approved') return res.status(400).json({ error: { message: `Cannot disburse a loan with status: ${loan.status}`, code: 'INVALID_STATUS' } });
+
+    const txHash = demo.fakeTx ? ('0x' + require('crypto').randomBytes(32).toString('hex')) : 'sim_tx_' + Date.now();
+    demo.updateLoan(req.params.id, { status: 'disbursed', disbursementTxHash: txHash });
+    logger.info('[demo] Loan disbursed', { loanId: loan.loanId, txHash });
+
+    return res.json({
       success: true,
-      data: {
-        loanId: result.loan.loanId,
-        status: result.loan.status,
-        txHash: result.txHash,
-        fee: result.fee,
-        amount: result.loan.amount,
-        dueDate: result.loan.dueDate,
-        totalDue: result.loan.totalDue
-      }
+      data: { loanId: loan.loanId, status: 'disbursed', txHash, amount: loan.amount, dueDate: loan.dueDate, totalDue: loan.totalDue }
     });
   } catch (err) {
     next(err);
@@ -119,21 +196,45 @@ router.post('/:id/disburse', async (req, res, next) => {
 });
 
 // ---- POST /loans/:id/repay ----
-// Process loan repayment.
 router.post('/:id/repay', validateRequest(repaySchema), async (req, res, next) => {
   try {
-    const result = await loanService.processRepayment(req.params.id, req.body.txHash);
+    if (dbReady()) {
+      const result = await loanService.processRepayment(req.params.id, req.body.txHash);
+      return res.json({ success: true, data: result });
+    }
 
-    res.json({
+    // Demo path
+    const loan = demo.findLoanById(req.params.id);
+    if (!loan) return res.status(404).json({ error: { message: 'Loan not found', code: 'LOAN_NOT_FOUND' } });
+    if (loan.status !== 'disbursed') return res.status(400).json({ error: { message: `Cannot repay a loan with status: ${loan.status}`, code: 'INVALID_STATUS' } });
+
+    const wasOnTime  = new Date() <= new Date(loan.dueDate);
+    const scoreDelta = wasOnTime ? 5 : -2;
+    const txHash     = req.body.txHash || ('0xrepay_' + Date.now());
+
+    demo.updateLoan(req.params.id, { status: 'repaid', repaymentTxHash: txHash });
+
+    // Update agent credit score
+    const agent = demo.findAgentByDid(loan.borrowerDid);
+    if (agent) {
+      const newScore     = Math.min(100, Math.max(0, agent.creditScore + scoreDelta));
+      const newRepaid    = agent.totalRepaid + 1;
+      const newOnTime    = wasOnTime ? (agent.onTimeRate * agent.totalRepaid + 1) / newRepaid
+                                     : (agent.onTimeRate * agent.totalRepaid)     / newRepaid;
+      demo.updateAgent(loan.borrowerDid, { creditScore: newScore, totalRepaid: newRepaid, onTimeRate: newOnTime });
+    }
+
+    logger.info('[demo] Loan repaid', { loanId: loan.loanId, wasOnTime, scoreDelta });
+
+    return res.json({
       success: true,
       data: {
-        loanId: result.loan.loanId,
-        status: result.loan.status,
-        repaymentTxHash: result.repaymentTxHash,
-        wasOnTime: result.wasOnTime,
-        creditScoreChange: result.creditScoreChange,
-        newCreditScore: result.newCreditScore,
-        newTier: result.newTier
+        loanId:            loan.loanId,
+        status:            'repaid',
+        repaymentTxHash:   txHash,
+        wasOnTime,
+        creditScoreChange: scoreDelta,
+        newCreditScore:    agent ? Math.min(100, Math.max(0, agent.creditScore + scoreDelta)) : null,
       }
     });
   } catch (err) {

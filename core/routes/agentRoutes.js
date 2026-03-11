@@ -5,79 +5,97 @@
 // GET  /agents/:did/score — Fetch credit score + tier for a given DID
 // GET  /agents/:did       — Get full agent profile (DID Document)
 
-const express = require('express');
-const Joi = require('joi');
+const express  = require('express');
+const Joi      = require('joi');
+const mongoose = require('mongoose');
 const validateRequest = require('../middleware/validateRequest');
-const didService = require('../../did/didService');
-const { Agent } = require('../models');
-const logger = require('../config/logger');
+const didService      = require('../../did/didService');
+const { Agent }       = require('../models');
+const demo            = require('../demo/demoStore');
+const logger          = require('../config/logger');
 
 const router = express.Router();
 
+// Returns true when MongoDB is connected and ready
+function dbReady() {
+  return mongoose.connection.readyState === 1;
+}
+
 // ---- Validation Schemas ----
 const registerSchema = Joi.object({
-  name: Joi.string().max(100).optional(),
-  type: Joi.string().max(50).optional(),       // e.g., 'trading-bot', 'service-agent'
-  description: Joi.string().max(500).optional()
-});
+  name:        Joi.string().max(100).optional(),
+  type:        Joi.string().max(50).optional(),
+  description: Joi.string().max(500).optional(),
+}).unknown(true);
 
 // ---- POST /agents/register ----
-// Register a new agent. Sentinel creates a wallet and DID automatically.
 router.post('/register', validateRequest(registerSchema), async (req, res, next) => {
   try {
-    const result = await didService.registerAgent(req.body);
+    // ── Live MongoDB path ──────────────────────────────────────
+    if (dbReady()) {
+      const result = await didService.registerAgent(req.body);
+      return res.status(201).json({
+        success: true,
+        data: {
+          did:           result.did,
+          walletAddress: result.walletAddress,
+          creditScore:   result.creditScore,
+          tier:          result.tier,
+          message:       'Agent registered successfully.',
+        }
+      });
+    }
 
-    res.status(201).json({
+    // ── Demo (in-memory) path ──────────────────────────────────
+    const agentCount = demo.countAgents();
+    const agent = demo.createAgent({ name: req.body.name || `Agent-${agentCount + 1}`, walletIndex: agentCount + 1 });
+    logger.info('[demo] Agent registered', { did: agent.did });
+
+    return res.status(201).json({
       success: true,
       data: {
-        did: result.did,
-        walletAddress: result.walletAddress,
-        creditScore: result.creditScore,
-        tier: result.tier,
-        message: 'Agent registered successfully. Your DID is your identity in the Sentinel network.'
+        did:           agent.did,
+        walletAddress: agent.walletAddress,
+        creditScore:   agent.creditScore,
+        tier:          agent.tier,
+        message:       'Registered in demo mode (no MongoDB).',
       }
     });
   } catch (err) {
-    // Handle duplicate DID
     if (err.code === 11000) {
-      return res.status(409).json({
-        error: {
-          message: 'Agent already registered',
-          code: 'DUPLICATE_AGENT'
-        }
-      });
+      return res.status(409).json({ error: { message: 'Agent already registered', code: 'DUPLICATE_AGENT' } });
     }
     next(err);
   }
 });
 
 // ---- GET /agents/:did/score ----
-// Returns the credit score and risk tier for a given DID.
 router.get('/:did/score', async (req, res, next) => {
   try {
     const did = decodeURIComponent(req.params.did);
-    const profile = await didService.resolveDID(did);
 
-    if (!profile) {
-      return res.status(404).json({
-        error: {
-          message: 'Agent not found',
-          code: 'AGENT_NOT_FOUND'
-        }
-      });
+    if (dbReady()) {
+      const profile = await didService.resolveDID(did);
+      if (!profile) return res.status(404).json({ error: { message: 'Agent not found', code: 'AGENT_NOT_FOUND' } });
+      return res.json({ success: true, data: profile });
     }
 
-    res.json({
+    // Demo path
+    const agent = demo.findAgentByDid(did);
+    if (!agent) return res.status(404).json({ error: { message: 'Agent not found (demo mode)', code: 'AGENT_NOT_FOUND' } });
+
+    return res.json({
       success: true,
       data: {
-        did: profile.did,
-        creditScore: profile.creditScore,
-        tier: profile.tier,
-        totalLoans: profile.totalLoans,
-        totalRepaid: profile.totalRepaid,
-        totalDefaulted: profile.totalDefaulted,
-        onTimeRate: profile.onTimeRate,
-        isBlacklisted: profile.isBlacklisted
+        did:            agent.did,
+        creditScore:    agent.creditScore,
+        tier:           agent.tier,
+        totalLoans:     agent.totalLoans,
+        totalRepaid:    agent.totalRepaid,
+        totalDefaulted: agent.totalDefaulted,
+        onTimeRate:     agent.onTimeRate,
+        isBlacklisted:  agent.isBlacklisted,
+        lastActivity:   agent.lastActivity,
       }
     });
   } catch (err) {
@@ -86,36 +104,21 @@ router.get('/:did/score', async (req, res, next) => {
 });
 
 // ---- GET /agents/:did ----
-// Returns the full DID Document (W3C format) for a given DID.
 router.get('/:did', async (req, res, next) => {
   try {
     const did = decodeURIComponent(req.params.did);
-    const agent = await Agent.findOne({ did });
 
-    if (!agent) {
-      return res.status(404).json({
-        error: {
-          message: 'Agent not found',
-          code: 'AGENT_NOT_FOUND'
-        }
-      });
+    if (dbReady()) {
+      const agent = await Agent.findOne({ did });
+      if (!agent) return res.status(404).json({ error: { message: 'Agent not found', code: 'AGENT_NOT_FOUND' } });
+      return res.json({ success: true, data: { agent, didDocument: didService.createDIDDocument(agent) } });
     }
 
-    const didDocument = didService.createDIDDocument(agent);
+    // Demo path
+    const agent = demo.findAgentByDid(did);
+    if (!agent) return res.status(404).json({ error: { message: 'Agent not found (demo mode)', code: 'AGENT_NOT_FOUND' } });
 
-    res.json({
-      success: true,
-      data: {
-        agent: {
-          did: agent.did,
-          walletAddress: agent.walletAddress,
-          creditScore: agent.creditScore,
-          tier: agent.tier,
-          registeredAt: agent.registeredAt
-        },
-        didDocument
-      }
-    });
+    return res.json({ success: true, data: { agent, didDocument: didService.createDIDDocument(agent) } });
   } catch (err) {
     next(err);
   }

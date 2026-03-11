@@ -60,7 +60,7 @@ export default function LoansSection() {
     setRequesting(true); setReqError(''); setLoanResult(null);
     try {
       const res = await api.requestLoan({ did: did.trim(), amount: parseFloat(amount), purpose });
-      setLoanResult(res);
+      setLoanResult(res.data);  // Extract from API response envelope
     } catch (e) {
       setReqError(e.message);
     } finally {
@@ -73,7 +73,7 @@ export default function LoansSection() {
     setStatusLoading(true); setStatusError('');
     try {
       const res = await api.getLoanStatus(loanId.trim());
-      setStatusResult(res);
+      setStatusResult(res.data);  // Extract from API response envelope
     } catch (e) {
       setStatusError(e.message);
     } finally {

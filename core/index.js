@@ -11,9 +11,13 @@
 
 require('dotenv').config();
 
+// Disable Mongoose buffering globally — queries fail immediately instead of
+// hanging for 10 seconds when MongoDB is unavailable.
+const mongoose = require('mongoose');
+mongoose.set('bufferCommands', false);
+
 const config = require('./config');
 const logger = require('./config/logger');
-const mongoose = require('mongoose');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -90,9 +94,11 @@ async function start() {
     try {
       await mongoose.connect(config.db.uri);
       logger.info('Connected to MongoDB Atlas');
+      module.exports.isDbConnected = true;
     } catch (dbErr) {
       if (config.server.env === 'development') {
         logger.warn('MongoDB connection failed, running in demo mode', { error: dbErr.message });
+        module.exports.isDbConnected = false;
       } else {
         throw dbErr;
       }

@@ -1,4 +1,6 @@
-﻿**🏦 SENTINEL**   ·   Autonomous AI Lending Agent   ·   Hackathon Galactica WDK Edition 1
+﻿
+**🏦 SENTINEL**   ·   Autonomous AI Lending Agent   ·   Hackathon Galactica WDK Edition 1
+
 
 
 **🏦 SENTINEL**
@@ -95,6 +97,8 @@ The credit scorer combines two signals for maximum accuracy and interpretability
 |**ML Model**|Repayment history, on-time rate, loan frequency, collateral ratio, velocity|60% — objective, historical, bias-resistant|
 |**LLM Reasoner**|Stated purpose, agent type, network trust graph, contextual risk signals|40% — qualitative, contextual, adaptable|
 
+
+
 ## **3.4  Risk Tiers & Interest Rates**
 
 |**Tier**|**Score Range**|**APR**|**Max Loan (USD₮)**|**Collateral**|
@@ -103,6 +107,7 @@ The credit scorer combines two signals for maximum accuracy and interpretability
 |**B — Standard**|60 – 79|9%|3,000|25% collateral|
 |**C — Subprime**|40 – 59|18%|500|50% collateral|
 |**D — Denied**|0 – 39|N/A|0|Loan denied|
+
 
 
 # **4. Technical Stack**
@@ -265,3 +270,5 @@ Four layers. Single responsibility each. Clean API contracts. A README that expl
 
 — Sentinel Team
 Confidential · Hackathon Submission · March 2026	
+
+

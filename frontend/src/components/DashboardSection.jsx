@@ -37,6 +37,7 @@ function ScoreRing({ score = 0 }) {
 
 // Copy DID button
 function CopyDID({ did }) {
+  if (!did) return null;  // Guard against undefined
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(did);
@@ -86,7 +87,7 @@ export default function DashboardSection() {
     setLoading(true); setError('');
     try {
       const res = await api.registerAgent({ name: name.trim() });
-      setAgent(res);
+      setAgent(res.data);  // Extract from API response envelope
     } catch (e) {
       setError(e.message);
     } finally {
@@ -99,7 +100,7 @@ export default function DashboardSection() {
     setLookupLoading(true); setLookupError('');
     try {
       const res = await api.getScore(lookupDid.trim());
-      setLookupResult(res);
+      setLookupResult(res.data);  // Extract from API response envelope
     } catch (e) {
       setLookupError(e.message);
     } finally {

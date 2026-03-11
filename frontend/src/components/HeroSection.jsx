@@ -119,15 +119,15 @@ export default function HeroSection({ onNav }) {
               <div key={h} className="px-4 py-2 font-mono text-[10px] text-white/25 tracking-wider border-b border-white/5">{h}</div>
             ))}
             {tiers.map(({ tier, range, apr, max, col, cls }) => (
-              <>
-                <div key={`${tier}-t`} className="px-4 py-3">
+              <div key={`tier-${tier}`} style={{ display: 'contents' }}>
+                <div className="px-4 py-3">
                   <span className={`font-display text-xs font-bold px-2 py-0.5 rounded border ${cls}`}>{tier}</span>
                 </div>
-                <div key={`${tier}-r`} className="px-4 py-3 font-mono text-xs text-white/50">{range}</div>
-                <div key={`${tier}-a`} className="px-4 py-3 font-mono text-xs text-white/50">{apr}</div>
-                <div key={`${tier}-m`} className="px-4 py-3 font-mono text-xs text-white/50">{max}</div>
-                <div key={`${tier}-c`} className="px-4 py-3 font-mono text-xs text-white/50">{col}</div>
-              </>
+                <div className="px-4 py-3 font-mono text-xs text-white/50">{range}</div>
+                <div className="px-4 py-3 font-mono text-xs text-white/50">{apr}</div>
+                <div className="px-4 py-3 font-mono text-xs text-white/50">{max}</div>
+                <div className="px-4 py-3 font-mono text-xs text-white/50">{col}</div>
+              </div>
             ))}
           </div>
         </motion.div>
