@@ -60,6 +60,29 @@ app.use('/capital', capitalRoutes);
 // ---- Error Handler (must be last) ----
 app.use(errorHandler);
 
+// ---- Port finder — tries preferred port, increments if busy ----
+function listenOnAvailablePort(preferredPort) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(preferredPort);
+
+    server.on('listening', () => {
+      const { port } = server.address();
+      resolve(port);
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        logger.warn(`Port ${preferredPort} in use, trying ${preferredPort + 1}...`);
+        server.close();
+        // Recurse to the next port
+        listenOnAvailablePort(preferredPort + 1).then(resolve).catch(reject);
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
 // ---- Startup Function ----
 async function start() {
   try {
@@ -84,14 +107,17 @@ async function start() {
     // Start repayment monitor (checks every minute)
     repaymentMonitor.start('* * * * *');
 
-    // Start Express server
-    app.listen(config.server.port, () => {
-      logger.info(`Sentinel listening on port ${config.server.port}`, {
-        env: config.server.env,
-        blockchain: config.wdk.blockchain,
-        network: config.wdk.network
-      });
+    // Start Express server — auto-finds a free port if preferred is busy
+    const port = await listenOnAvailablePort(config.server.port);
+    logger.info(`Sentinel listening on port ${port}`, {
+      env: config.server.env,
+      blockchain: config.wdk.blockchain,
+      network: config.wdk.network
     });
+
+    if (port !== config.server.port) {
+      logger.warn(`Note: Started on port ${port} (port ${config.server.port} was busy). Update your frontend API base URL if needed.`);
+    }
   } catch (err) {
     logger.error('Startup failed', { error: err.message });
     process.exit(1);
@@ -103,8 +129,12 @@ process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled Rejection', { reason: reason?.message || reason });
 });
 
-// Handle uncaught exceptions
+// Handle uncaught exceptions — only fatal for non-port errors
 process.on('uncaughtException', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    // Already handled inside listenOnAvailablePort — ignore here
+    return;
+  }
   logger.error('Uncaught Exception', { error: err.message, stack: err.stack });
   process.exit(1);
 });
