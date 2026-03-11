@@ -17,7 +17,7 @@
         "enabled": true,
         "env": {
           "SENTINEL_API_URL": "http://localhost:3000",
-          "TELEGRAM_BOT_TOKEN": ""
+          "TELEGRAM_BOT_TOKEN": "7672027976:AAHxD_eX0TX9q9jNHrrm4UGtE9Ob95MhNwo"
         }
       }
     }
