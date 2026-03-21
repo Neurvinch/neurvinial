@@ -46,10 +46,11 @@ router.post('/register', validateRequest(registerSchema), async (req, res, next)
       });
     }
 
-    // ── Demo (in-memory) path ──────────────────────────────────
+    // ── In-memory path (no MongoDB) ──────────────────────────
+    // Uses WDK-derived wallet addresses
     const agentCount = demo.countAgents();
-    const agent = demo.createAgent({ name: req.body.name || `Agent-${agentCount + 1}`, walletIndex: agentCount + 1 });
-    logger.info('[demo] Agent registered', { did: agent.did });
+    const agent = await demo.createAgent({ name: req.body.name || `Agent-${agentCount + 1}`, walletIndex: agentCount + 1 });
+    logger.info('Agent registered (in-memory store)', { did: agent.did });
 
     return res.status(201).json({
       success: true,
@@ -58,7 +59,7 @@ router.post('/register', validateRequest(registerSchema), async (req, res, next)
         walletAddress: agent.walletAddress,
         creditScore:   agent.creditScore,
         tier:          agent.tier,
-        message:       'Registered in demo mode (no MongoDB).',
+        message:       'Registered using in-memory store (no MongoDB). WDK wallet address derived.',
       }
     });
   } catch (err) {
@@ -80,9 +81,9 @@ router.get('/:did/score', async (req, res, next) => {
       return res.json({ success: true, data: profile });
     }
 
-    // Demo path
+    // In-memory path
     const agent = demo.findAgentByDid(did);
-    if (!agent) return res.status(404).json({ error: { message: 'Agent not found (demo mode)', code: 'AGENT_NOT_FOUND' } });
+    if (!agent) return res.status(404).json({ error: { message: 'Agent not found', code: 'AGENT_NOT_FOUND' } });
 
     return res.json({
       success: true,
@@ -114,9 +115,9 @@ router.get('/:did', async (req, res, next) => {
       return res.json({ success: true, data: { agent, didDocument: didService.createDIDDocument(agent) } });
     }
 
-    // Demo path
+    // In-memory path
     const agent = demo.findAgentByDid(did);
-    if (!agent) return res.status(404).json({ error: { message: 'Agent not found (demo mode)', code: 'AGENT_NOT_FOUND' } });
+    if (!agent) return res.status(404).json({ error: { message: 'Agent not found', code: 'AGENT_NOT_FOUND' } });
 
     return res.json({ success: true, data: { agent, didDocument: didService.createDIDDocument(agent) } });
   } catch (err) {
