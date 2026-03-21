@@ -49,6 +49,9 @@ const loanSchema = new mongoose.Schema({
   // --- On-Chain References ---
   disbursementTxHash: { type: String },
   repaymentTxHash: { type: String },
+  collateralLiquidationTxHash: { type: String },
+  collateralLiquidated: { type: Boolean, default: false },
+  liquidationError: { type: String },
 
   // --- Timeline ---
   disbursedAt: { type: Date },
