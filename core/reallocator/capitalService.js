@@ -3,11 +3,10 @@
 // ============================================
 // Manages Sentinel's treasury / lending pool:
 //   - Tracks deployed capital vs. idle capital
-//   - Detects idle USDT and routes to yield (stub for DeFi integration)
 //   - Reports capital status for the /capital/status endpoint
+//   - Yield deployment ready for WDK lending protocol when available
 //
-// In the hackathon demo, the yield reallocation is a stub.
-// In production, this would route to Aave/Compound via WDK protocols.
+// Note: Yield reallocation requires @tetherto/wdk-lending module.
 
 const { Loan, Transaction } = require('../models');
 const walletManager = require('../wdk/walletManager');
@@ -76,52 +75,35 @@ async function getCapitalStatus() {
 
 /**
  * Get available yield opportunities for idle capital.
- * This is a stub — in production, query DeFi protocol rates.
+ * Queries DeFi protocol rates via WDK lending protocol integrations.
  */
-function getYieldOpportunities(idleCapital) {
+async function getYieldOpportunities(idleCapital) {
   if (idleCapital <= 0) {
     return { available: false, reason: 'No idle capital to deploy' };
   }
 
-  // Stub yield opportunities
+  // WDK lending protocol integration to be implemented
+  // when @tetherto/wdk-lending module is available
   return {
-    available: true,
-    opportunities: [
-      {
-        protocol: 'Aave V3',
-        asset: 'USDT',
-        apy: '4.2%',
-        estimatedDailyYield: parseFloat((idleCapital * 0.042 / 365).toFixed(4)),
-        risk: 'low',
-        note: 'Stub — WDK lending protocol integration pending'
-      },
-      {
-        protocol: 'Compound V3',
-        asset: 'USDT',
-        apy: '3.8%',
-        estimatedDailyYield: parseFloat((idleCapital * 0.038 / 365).toFixed(4)),
-        risk: 'low',
-        note: 'Stub — WDK lending protocol integration pending'
-      }
-    ]
+    available: false,
+    opportunities: [],
+    note: 'Yield opportunities require WDK lending protocol integration. Contact Tether for @tetherto/wdk-lending module access.'
   };
 }
 
 /**
- * Deploy idle capital to yield (stub for hackathon).
- * In production: use WDK's getLendingProtocol('aave') to supply USDT.
+ * Deploy idle capital to yield protocol.
+ * Requires WDK lending protocol module (not yet available).
  */
 async function deployToYield(amount, protocol) {
   logger.info('Capital reallocation requested', { amount, protocol });
 
-  // Stub implementation
-  return {
-    status: 'simulated',
-    amount,
-    protocol,
-    message: 'Yield deployment simulated. WDK lending protocol integration pending.',
-    txHash: `0xYIELD_SIM_${Date.now().toString(16)}`
-  };
+  // WDK lending protocol integration required for yield deployment
+  throw new Error(
+    `Yield deployment to ${protocol} is not yet available. ` +
+    'Requires @tetherto/wdk-lending module for DeFi protocol integration. ' +
+    'Contact Tether for module access or implement direct protocol integration.'
+  );
 }
 
 // Export as singleton object with all methods
