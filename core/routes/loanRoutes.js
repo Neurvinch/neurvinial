@@ -3,15 +3,18 @@
 // ============================================
 // POST /loans/request      — Submit a loan request
 // GET  /loans/:id/status   — Poll loan status
-// POST /loans/:id/disburse — Disburse an approved loan
+// POST  /loans/:id/disburse — Disburse an approved loan
 // POST /loans/:id/repay    — Process repayment
 
 const express  = require('express');
-const Joi      = require('joi');
 const mongoose = require('mongoose');
 const validateRequest = require('../middleware/validateRequest');
+const { requireApiKey } = require('../middleware/apiAuth');
+const {
+  loanRequestSchema,
+  loanRepaymentSchema
+} = require('../middleware/schemas');
 const loanService     = require('../loans/loanService');
-const { calculateCreditScore } = require('../scoring/scoreEngine');
 const demo            = require('../demo/demoStore');
 const { RISK_TIERS }  = require('../utils/constants');
 const logger          = require('../config/logger');
@@ -20,16 +23,8 @@ const router = express.Router();
 
 function dbReady() { return mongoose.connection.readyState === 1; }
 
-const loanRequestSchema = Joi.object({
-  did:     Joi.string().required(),
-  amount:  Joi.number().positive().max(10000).required(),
-  purpose: Joi.string().max(500).optional(),
-});
-
-const repaySchema = Joi.object({ txHash: Joi.string().optional() });
-
-// ---- POST /loans/request ----
-router.post('/request', validateRequest(loanRequestSchema), async (req, res, next) => {
+// ---- POST /loans/request ----(protected) ----
+router.post('/request', requireApiKey, validateRequest(loanRequestSchema), async (req, res, next) => {
   try {
     const { did, amount, purpose } = req.body;
 
@@ -56,8 +51,9 @@ router.post('/request', validateRequest(loanRequestSchema), async (req, res, nex
       });
     }
 
-    // ── Demo path ──────────────────────────────────────────────
-    // 1. Find agent in demo store
+    // ── In-memory store path ──────────────────────────────────
+    // Used when MongoDB is not connected. Still uses real WDK for on-chain operations.
+    // 1. Find agent in store
     const agent = demo.findAgentByDid(did);
     if (!agent) {
       return res.status(404).json({ error: { message: 'Agent not found. Register first at POST /agents/register', code: 'AGENT_NOT_FOUND' } });
@@ -121,7 +117,7 @@ router.post('/request', validateRequest(loanRequestSchema), async (req, res, nex
     // 5. Update agent stats
     demo.updateAgent(did, { totalLoans: agent.totalLoans + 1 });
 
-    logger.info('[demo] Loan approved', { loanId: loan.loanId, tier, amount });
+    logger.info('Loan approved (in-memory store)', { loanId: loan.loanId, tier, amount });
 
     return res.status(201).json({
       success: true,
@@ -169,37 +165,46 @@ router.get('/:id/status', async (req, res, next) => {
   }
 });
 
-// ---- POST /loans/:id/disburse ----
-router.post('/:id/disburse', async (req, res, next) => {
+// ---- POST /loans/:id/disburse (protected) ----
+router.post('/:id/disburse', requireApiKey, async (req, res, next) => {
   try {
     if (dbReady()) {
       const result = await loanService.disburseLoan(req.params.id);
       return res.json({ success: true, data: result });
     }
 
-    // Demo path
+    // In-memory store path - still requires real WDK for disbursement
     const loan = demo.findLoanById(req.params.id);
     if (!loan) return res.status(404).json({ error: { message: 'Loan not found', code: 'LOAN_NOT_FOUND' } });
     if (loan.status !== 'approved') return res.status(400).json({ error: { message: `Cannot disburse a loan with status: ${loan.status}`, code: 'INVALID_STATUS' } });
 
-    const txHash = demo.fakeTx ? ('0x' + require('crypto').randomBytes(32).toString('hex')) : 'sim_tx_' + Date.now();
-    demo.updateLoan(req.params.id, { status: 'disbursed', disbursementTxHash: txHash });
-    logger.info('[demo] Loan disbursed', { loanId: loan.loanId, txHash });
+    // Get borrower's wallet address from agent record
+    const agent = demo.findAgentByDid(loan.borrowerDid);
+    if (!agent || !agent.walletAddress) {
+      return res.status(400).json({ error: { message: 'Borrower wallet address not found', code: 'NO_WALLET' } });
+    }
+
+    // Use real WDK to send USDT
+    const walletManager = require('../wdk/walletManager');
+    const result = await walletManager.sendUSDT(agent.walletAddress, loan.amount);
+
+    demo.updateLoan(req.params.id, { status: 'disbursed', disbursementTxHash: result.hash });
+    logger.info('Loan disbursed via WDK', { loanId: loan.loanId, txHash: result.hash });
 
     return res.json({
       success: true,
-      data: { loanId: loan.loanId, status: 'disbursed', txHash, amount: loan.amount, dueDate: loan.dueDate, totalDue: loan.totalDue }
+      data: { loanId: loan.loanId, status: 'disbursed', txHash: result.hash, amount: loan.amount, dueDate: loan.dueDate, totalDue: loan.totalDue }
     });
   } catch (err) {
     next(err);
   }
 });
 
-// ---- POST /loans/:id/repay ----
-router.post('/:id/repay', validateRequest(repaySchema), async (req, res, next) => {
+// ---- POST /loans/:id/repay (protected) ----
+router.post('/:id/repay', requireApiKey, validateRequest(loanRepaymentSchema), async (req, res, next) => {
   try {
     if (dbReady()) {
-      const result = await loanService.processRepayment(req.params.id, req.body.txHash);
+      const result = await loanService.processRepayment(req.params.id, req.body.repaymentTxHash);
       return res.json({ success: true, data: result });
     }
 
@@ -210,7 +215,7 @@ router.post('/:id/repay', validateRequest(repaySchema), async (req, res, next) =
 
     const wasOnTime  = new Date() <= new Date(loan.dueDate);
     const scoreDelta = wasOnTime ? 5 : -2;
-    const txHash     = req.body.txHash || ('0xrepay_' + Date.now());
+    const txHash     = req.body.repaymentTxHash || ('0xrepay_' + Date.now());
 
     demo.updateLoan(req.params.id, { status: 'repaid', repaymentTxHash: txHash });
 
@@ -224,7 +229,7 @@ router.post('/:id/repay', validateRequest(repaySchema), async (req, res, next) =
       demo.updateAgent(loan.borrowerDid, { creditScore: newScore, totalRepaid: newRepaid, onTimeRate: newOnTime });
     }
 
-    logger.info('[demo] Loan repaid', { loanId: loan.loanId, wasOnTime, scoreDelta });
+    logger.info('Loan repaid (in-memory store)', { loanId: loan.loanId, wasOnTime, scoreDelta });
 
     return res.json({
       success: true,
