@@ -7,7 +7,7 @@ node_modules/
 # Logs
 *.log
 logs/
-
+*.md
 # ML model artifacts
 *.pkl
 *.joblib
