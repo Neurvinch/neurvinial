@@ -1,32 +1,47 @@
 // ============================================
-// SENTINEL — In-Memory Demo Store
+// SENTINEL — In-Memory Data Store
 // ============================================
 // Powers ALL endpoints when MongoDB is unavailable.
 // Data survives for the life of the process only.
 // Provides the same interface shape as the real MongoDB models.
+//
+// Note: This store is for testing without MongoDB. On-chain
+// operations (disbursements) still use real WDK transactions.
 
 const { v4: uuid } = require('uuid');
-const crypto = require('crypto');
 
 // ---- Stores ----
 const agents = new Map();  // key: did  → value: agent object
 const loans  = new Map();  // key: id   → value: loan object
 
+// Wallet index counter for WDK account derivation
+let walletIndexCounter = 1;
+
 // ---- Helpers ----
-function now()      { return new Date().toISOString(); }
-function fakeAddr() { return '0x' + crypto.randomBytes(20).toString('hex'); }
-function fakeTx()   { return '0x' + crypto.randomBytes(32).toString('hex'); }
-function loanId()   { return 'loan_' + uuid().replace(/-/g, '').slice(0, 16); }
+function now()    { return new Date().toISOString(); }
+function loanId() { return 'loan_' + uuid().replace(/-/g, '').slice(0, 16); }
 
 // ---- AGENTS ----
 
-function createAgent({ name = 'Agent', walletIndex = 1 } = {}) {
-  const address = fakeAddr();
-  const did     = `did:sentinel:${address.toLowerCase()}`;
-  const agent   = {
+/**
+ * Create a new agent with a WDK-derived wallet address.
+ * Uses the walletManager to generate a real blockchain address.
+ */
+async function createAgent({ name = 'Agent', walletIndex = null } = {}) {
+  const walletManager = require('../wdk/walletManager');
+
+  // Use provided index or auto-increment
+  const index = walletIndex !== null ? walletIndex : walletIndexCounter++;
+
+  // Get real WDK-derived wallet address
+  const { address } = await walletManager.createWalletForAgent(index);
+  const did = `did:sentinel:${address.toLowerCase()}`;
+
+  const agent = {
     _id:            uuid(),
     did,
     walletAddress:  address,
+    walletIndex:    index,
     creditScore:    50,
     tier:           'C',
     totalLoans:     0,
@@ -36,7 +51,7 @@ function createAgent({ name = 'Agent', walletIndex = 1 } = {}) {
     isBlacklisted:  false,
     registeredAt:   now(),
     lastActivity:   now(),
-    metadata:       { name, walletIndex },
+    metadata:       { name, walletIndex: index },
   };
   agents.set(did, agent);
   return agent;
@@ -106,7 +121,7 @@ function updateLoan(id, changes) {
 // Derives capital metrics live from the loans store
 
 function getCapitalMetrics() {
-  const TOTAL_CAPITAL = 50_000; // simulated reserve fund
+  const TOTAL_CAPITAL = 50_000; // Reserve fund (configurable via env in production)
 
   let deployed           = 0;
   let interestEarned     = 0;
@@ -158,7 +173,4 @@ module.exports = {
   updateLoan,
   // Capital
   getCapitalMetrics,
-  // Helpers for services
-  fakeAddr,
-  fakeTx,
 };
