@@ -1,22 +1,41 @@
 // ============================================
-// SENTINEL — WDK Wallet Manager
+// SENTINEL — WDK Wallet Manager (REAL IMPLEMENTATION)
 // ============================================
 // Singleton that wraps the Tether WDK SDK.
 // Handles: wallet init, account creation, USDT transfers, balance checks.
 //
-// Architecture decision: This is a singleton because Sentinel has ONE
-// master wallet (the lending pool). All operations go through this wallet.
+// NO MOCKS - This file uses only real WDK operations.
+// If WDK is not properly configured, operations will fail with clear errors.
 
-const WDK = require('@tetherto/wdk').default || require('@tetherto/wdk');
-const WalletManagerEvm = require('@tetherto/wdk-wallet-evm').default || require('@tetherto/wdk-wallet-evm');
 const config = require('../config');
 const logger = require('../config/logger');
 
-// USDT contract addresses by network
+// Lazy load WDK modules to handle import errors gracefully
+let WDK, WalletManagerEvm, WalletAccountReadOnlyEvm;
+
+try {
+  WDK = require('@tetherto/wdk').default || require('@tetherto/wdk');
+  const wdkEvm = require('@tetherto/wdk-wallet-evm');
+  WalletManagerEvm = wdkEvm.default || wdkEvm;
+  WalletAccountReadOnlyEvm = wdkEvm.WalletAccountReadOnlyEvm;
+} catch (err) {
+  logger.error('Failed to load WDK modules', { error: err.message });
+}
+
+// USDT contract addresses by network (REAL addresses)
 const USDT_CONTRACTS = {
   mainnet: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-  sepolia: '0x7169D38820dfd117C3FA1f22a697dBA58d90BA06',  // Tether test USDT on Sepolia
-  polygon: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F'
+  sepolia: '0x7169D38820dfd117C3FA1f22a697dBA58d90BA06',
+  polygon: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+  arbitrum: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'
+};
+
+// Default RPC URLs (fallbacks)
+const DEFAULT_RPC_URLS = {
+  mainnet: 'https://eth.llamarpc.com',
+  sepolia: 'https://rpc.sepolia.org',
+  polygon: 'https://polygon-rpc.com',
+  arbitrum: 'https://arb1.arbitrum.io/rpc'
 };
 
 // ============================================
@@ -25,60 +44,129 @@ const USDT_CONTRACTS = {
 const state = {
   wdk: null,
   sentinelAccount: null,
-  initialized: false
+  initialized: false,
+  seedPhrase: null
 };
 
 /**
- * Check if seed phrase looks like a valid BIP39 mnemonic (12 or 24 words).
- * Simple heuristic: valid mnemonic contains only lowercase letters and spaces.
+ * Generate a new random 12-word BIP-39 seed phrase using WDK.
+ * This is a REAL seed phrase that can be used for production.
  */
-function isValidMnemonicFormat(phrase) {
-  if (!phrase || typeof phrase !== 'string') return false;
+function generateSeedPhrase(wordCount = 12) {
+  if (!WDK) {
+    throw new Error('WDK module not loaded. Run: npm install @tetherto/wdk @tetherto/wdk-wallet-evm');
+  }
+  return WDK.getRandomSeedPhrase(wordCount);
+}
+
+/**
+ * Validate a seed phrase (basic BIP-39 format check).
+ * Checks for 12 or 24 words separated by spaces.
+ */
+function validateSeedPhrase(phrase) {
+  if (!phrase || typeof phrase !== 'string') {
+    return false;
+  }
+
   const words = phrase.trim().split(/\s+/);
-  const isValidLength = words.length === 12 || words.length === 24;
-  const isValidWords   = words.every(w => /^[a-z]+$/.test(w));
-  return isValidLength && isValidWords;
+  const wordCount = words.length;
+
+  // BIP-39 supports 12, 15, 18, 21, or 24 word mnemonics
+  // Most common are 12 and 24
+  const validLengths = [12, 15, 18, 21, 24];
+
+  if (!validLengths.includes(wordCount)) {
+    return false;
+  }
+
+  // Check that each word is at least 3 characters (BIP-39 words are 3-8 chars)
+  for (const word of words) {
+    if (word.length < 3 || word.length > 8) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
  * Initialize the WDK with the seed phrase from config.
- * Must be called once at server startup before any wallet operations.
+ * REQUIRED: WDK_SEED_PHRASE must be set in environment.
+ * NO FALLBACK to simulation mode.
  */
 async function initialize() {
   if (state.initialized) return;
 
-  if (!config.wdk.seedPhrase || !isValidMnemonicFormat(config.wdk.seedPhrase)) {
-    logger.warn('WDK_SEED_PHRASE not configured or invalid — wallet operations will be simulated');
-    state.initialized = true;
-    return;
+  if (!WDK || !WalletManagerEvm) {
+    throw new Error('WDK modules not loaded. Install with: npm install @tetherto/wdk @tetherto/wdk-wallet-evm');
   }
+
+  const seedPhrase = config.wdk.seedPhrase;
+
+  if (!seedPhrase) {
+    // Generate a new seed phrase and log it (for first-time setup)
+    const newSeed = generateSeedPhrase(12);
+    logger.error('WDK_SEED_PHRASE not configured!');
+    logger.info('Generated new seed phrase for you. Add this to your .env file:');
+    logger.info(`WDK_SEED_PHRASE=${newSeed}`);
+    throw new Error('WDK_SEED_PHRASE is required. Check logs for a generated seed phrase.');
+  }
+
+  // Validate seed phrase
+  if (!validateSeedPhrase(seedPhrase)) {
+    throw new Error('Invalid WDK_SEED_PHRASE. Must be a valid 12 or 24 word BIP-39 mnemonic.');
+  }
+
+  // Get RPC URL (use config or default)
+  const rpcUrl = config.wdk.rpcUrl || DEFAULT_RPC_URLS[config.wdk.network] || DEFAULT_RPC_URLS.sepolia;
 
   try {
     // Build EVM wallet configuration
-    const evmConfig = {};
-    if (config.wdk.rpcUrl) {
-      evmConfig.provider = config.wdk.rpcUrl;
-    }
+    const evmConfig = {
+      provider: rpcUrl
+    };
 
     // Create WDK instance with the seed phrase
-    state.wdk = new WDK(config.wdk.seedPhrase)
+    state.wdk = new WDK(seedPhrase)
       .registerWallet(config.wdk.blockchain, WalletManagerEvm, evmConfig);
+
+    state.seedPhrase = seedPhrase;
 
     // Get Sentinel's master account (index 0)
     state.sentinelAccount = await state.wdk.getAccount(config.wdk.blockchain, 0);
     const address = await state.sentinelAccount.getAddress();
 
-    logger.info('WDK initialized', {
+    // Verify we can connect by checking balance
+    const ethBalance = await state.sentinelAccount.getBalance();
+
+    logger.info('WDK initialized successfully', {
       blockchain: config.wdk.blockchain,
       network: config.wdk.network,
-      sentinelAddress: address
+      rpcUrl: rpcUrl.substring(0, 30) + '...',
+      sentinelAddress: address,
+      ethBalance: (Number(ethBalance) / 1e18).toFixed(6) + ' ETH'
     });
 
     state.initialized = true;
   } catch (err) {
-    logger.warn('WDK initialization failed, using simulation mode', { error: err.message });
-    // Don't crash — allow server to start in simulation mode
-    state.initialized = true;
+    logger.error('WDK initialization FAILED', { error: err.message });
+    throw new Error(`WDK initialization failed: ${err.message}`);
+  }
+}
+
+/**
+ * Check if WDK is properly initialized.
+ */
+function isInitialized() {
+  return state.initialized && state.sentinelAccount !== null;
+}
+
+/**
+ * Require initialization - throws if not initialized.
+ */
+function requireInitialized() {
+  if (!isInitialized()) {
+    throw new Error('WDK not initialized. Call initialize() first or check WDK_SEED_PHRASE configuration.');
   }
 }
 
@@ -86,7 +174,7 @@ async function initialize() {
  * Get Sentinel's master wallet address.
  */
 async function getSentinelAddress() {
-  if (!state.sentinelAccount) return 'SIMULATION_MODE';
+  requireInitialized();
   return state.sentinelAccount.getAddress();
 }
 
@@ -95,13 +183,7 @@ async function getSentinelAddress() {
  * Each agent gets a unique index for their wallet.
  */
 async function createWalletForAgent(index) {
-  if (!state.wdk) {
-    // Simulation mode — return a placeholder
-    return {
-      address: `0xSIM_${index.toString().padStart(40, '0')}`,
-      index
-    };
-  }
+  requireInitialized();
 
   const account = await state.wdk.getAccount(config.wdk.blockchain, index);
   const address = await account.getAddress();
@@ -113,33 +195,30 @@ async function createWalletForAgent(index) {
 /**
  * Send USDT to a recipient address.
  * This is the core on-chain operation for loan disbursement.
+ * REAL TRANSACTION - requires gas (ETH) in Sentinel's wallet.
  */
 async function sendUSDT(recipientAddress, amount) {
-  const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
+  requireInitialized();
 
-  if (!state.sentinelAccount) {
-    // Simulation mode
-    const simHash = `0xSIM_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 10)}`;
-    logger.info('SIMULATED USDT transfer', {
-      to: recipientAddress,
-      amount,
-      txHash: simHash
-    });
-    return { hash: simHash, fee: '0' };
-  }
+  const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
+  const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT has 6 decimals
+
+  logger.info('Initiating USDT transfer', {
+    to: recipientAddress,
+    amount,
+    amountBaseUnits: amountInBaseUnits.toString(),
+    token: usdtContract,
+    network: config.wdk.network
+  });
 
   try {
-    // Use the ERC20 transfer method from WDK
-    // amount is in USDT (6 decimals), so 100 USDT = 100000000
-    const amountInBaseUnits = BigInt(Math.round(amount * 1e6));
-
     const result = await state.sentinelAccount.transfer({
       token: usdtContract,
       recipient: recipientAddress,
       amount: amountInBaseUnits
     });
 
-    logger.info('USDT transfer sent', {
+    logger.info('USDT transfer CONFIRMED', {
       to: recipientAddress,
       amount,
       txHash: result.hash,
@@ -151,29 +230,27 @@ async function sendUSDT(recipientAddress, amount) {
       fee: result.fee?.toString() || '0'
     };
   } catch (err) {
-    logger.error('USDT transfer failed', {
+    logger.error('USDT transfer FAILED', {
       to: recipientAddress,
       amount,
       error: err.message
     });
-    throw err;
+    throw new Error(`USDT transfer failed: ${err.message}`);
   }
 }
 
 /**
- * Check USDT balance for an address.
+ * Check USDT balance for any address.
  */
 async function getUSDTBalance(address) {
-  const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
+  requireInitialized();
 
-  if (!state.sentinelAccount) {
-    return { balance: 0, raw: '0' };
-  }
+  const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
+  const rpcUrl = config.wdk.rpcUrl || DEFAULT_RPC_URLS[config.wdk.network] || DEFAULT_RPC_URLS.sepolia;
 
   try {
-    const { WalletAccountReadOnlyEvm } = require('@tetherto/wdk-wallet-evm');
     const readOnly = new WalletAccountReadOnlyEvm(address, {
-      provider: config.wdk.rpcUrl
+      provider: rpcUrl
     });
 
     const rawBalance = await readOnly.getTokenBalance(usdtContract);
@@ -182,7 +259,7 @@ async function getUSDTBalance(address) {
     return { balance, raw: rawBalance.toString() };
   } catch (err) {
     logger.error('Balance check failed', { address, error: err.message });
-    return { balance: 0, raw: '0' };
+    throw new Error(`Balance check failed: ${err.message}`);
   }
 }
 
@@ -190,9 +267,7 @@ async function getUSDTBalance(address) {
  * Get Sentinel's native ETH balance (needed for gas).
  */
 async function getSentinelETHBalance() {
-  if (!state.sentinelAccount) {
-    return { balance: 0, raw: '0' };
-  }
+  requireInitialized();
 
   try {
     const rawBalance = await state.sentinelAccount.getBalance();
@@ -200,22 +275,61 @@ async function getSentinelETHBalance() {
     return { balance, raw: rawBalance.toString() };
   } catch (err) {
     logger.error('ETH balance check failed', { error: err.message });
-    return { balance: 0, raw: '0' };
+    throw new Error(`ETH balance check failed: ${err.message}`);
   }
 }
 
 /**
- * Generate a random seed phrase (for demo/testing).
+ * Get Sentinel's USDT balance.
  */
-function getRandomSeedPhrase() {
-  return WDK.getRandomSeedPhrase();
+async function getSentinelUSDTBalance() {
+  requireInitialized();
+  const address = await getSentinelAddress();
+  return getUSDTBalance(address);
 }
 
 /**
- * Validate a seed phrase.
+ * Get transaction receipt by hash.
  */
-function isValidSeedPhrase(phrase) {
-  return WDK.isValidSeedPhrase(phrase);
+async function getTransactionReceipt(txHash) {
+  requireInitialized();
+
+  try {
+    return await state.sentinelAccount.getTransactionReceipt(txHash);
+  } catch (err) {
+    logger.error('Failed to get transaction receipt', { txHash, error: err.message });
+    throw err;
+  }
+}
+
+/**
+ * Sign a message with Sentinel's wallet.
+ */
+async function signMessage(message) {
+  requireInitialized();
+  return state.sentinelAccount.sign(message);
+}
+
+/**
+ * Verify a signed message.
+ */
+async function verifyMessage(message, signature) {
+  requireInitialized();
+  return state.sentinelAccount.verify(message, signature);
+}
+
+/**
+ * Get fee rates from the network.
+ */
+async function getFeeRates() {
+  requireInitialized();
+
+  try {
+    return await state.wdk.getFeeRates(config.wdk.blockchain);
+  } catch (err) {
+    logger.error('Failed to get fee rates', { error: err.message });
+    return { normal: BigInt(0), fast: BigInt(0) };
+  }
 }
 
 /**
@@ -224,19 +338,37 @@ function isValidSeedPhrase(phrase) {
 function dispose() {
   if (state.wdk) {
     state.wdk.dispose();
+    state.wdk = null;
+    state.sentinelAccount = null;
+    state.initialized = false;
     logger.info('WDK disposed');
   }
 }
 
-// Export as singleton object with all methods
+// Export USDT contracts for external use
 module.exports = {
+  // Core operations
   initialize,
+  isInitialized,
   getSentinelAddress,
   createWalletForAgent,
   sendUSDT,
   getUSDTBalance,
   getSentinelETHBalance,
-  getRandomSeedPhrase,
-  isValidSeedPhrase,
-  dispose
+  getSentinelUSDTBalance,
+  getTransactionReceipt,
+
+  // Signing
+  signMessage,
+  verifyMessage,
+
+  // Utilities
+  generateSeedPhrase,
+  validateSeedPhrase,
+  getFeeRates,
+  dispose,
+
+  // Constants
+  USDT_CONTRACTS,
+  DEFAULT_RPC_URLS
 };
