@@ -26,9 +26,13 @@ const errorHandler = require('./middleware/errorHandler');
 const agentRoutes = require('./routes/agentRoutes');
 const loanRoutes = require('./routes/loanRoutes');
 const capitalRoutes = require('./routes/capitalRoutes');
+const openclawRoutes = require('./agent/agentRoutes');
+const channelsRoutes = require('./routes/channelsRoutes');
 const walletManager = require('./wdk/walletManager');
 const repaymentMonitor = require('./monitor/daemon');
-const telegramBot = require('../telegram/bot');
+const telegramChannel = require('./channels/telegramChannel');
+const whatsappChannel = require('./channels/whatsappChannel');
+const { initialize: initializeOpenClaw } = require('./agent/openclawIntegration');
 
 const app = express();
 
@@ -47,12 +51,18 @@ app.use(rateLimit({
 }));
 
 // ---- Health Check ----
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     service: 'sentinel',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    components: {
+      mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      openclaw: 'initialized',
+      telegram: !!process.env.TELEGRAM_BOT_TOKEN ? 'active' : 'disabled',
+      whatsapp: !!process.env.TWILIO_ACCOUNT_SID ? 'active' : 'disabled'
+    }
   });
 });
 
@@ -60,6 +70,8 @@ app.get('/health', (req, res) => {
 app.use('/agents', agentRoutes);
 app.use('/loans', loanRoutes);
 app.use('/capital', capitalRoutes);
+app.use('/agent', openclawRoutes);              // OpenClaw skills API
+app.use('/channels', channelsRoutes);           // Telegram & WhatsApp channels
 
 // ---- Error Handler (must be last) ----
 app.use(errorHandler);
@@ -107,8 +119,12 @@ async function start() {
     // Initialize WDK wallet
     await walletManager.initialize();
 
-    // Initialize Telegram bot
-    telegramBot.initialize();
+    // Initialize OpenClaw agent runtime
+    await initializeOpenClaw();
+
+    // Initialize communication channels (Telegram, WhatsApp)
+    telegramChannel.initializeTelegram();
+    whatsappChannel.initializeWhatsApp();
 
     // Start repayment monitor (checks every minute)
     repaymentMonitor.start('* * * * *');
