@@ -1,0 +1,84 @@
+{
+  "name": "sentinel",
+  "version": "1.0.0",
+  "description": "Autonomous AI Lending Agent - OpenClaw Gateway Configuration",
+
+  "gateway": {
+    "port": 18789,
+    "apiUrl": "http://localhost:3000"
+  },
+
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "dmPolicy": "pairing",
+      "groups": {
+        "*": {
+          "requireMention": true,
+          "allowFrom": ["*"]
+        }
+      }
+    },
+    "whatsapp": {
+      "enabled": false,
+      "dmPolicy": "pairing",
+      "allowFrom": [],
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": []
+    },
+    "discord": {
+      "enabled": false,
+      "dmPolicy": "pairing"
+    },
+    "slack": {
+      "enabled": false,
+      "dmPolicy": "pairing"
+    }
+  },
+
+  "skills": {
+    "path": "./agent/skills",
+    "entries": {
+      "sentinel_credit": {
+        "enabled": true,
+        "description": "Credit assessment - evaluates agent creditworthiness",
+        "triggers": ["credit score", "assess credit", "check credit", "my score"]
+      },
+      "sentinel_lending": {
+        "enabled": true,
+        "description": "Lending decisions - processes loan requests autonomously",
+        "triggers": ["request loan", "borrow", "loan", "need money"]
+      },
+      "sentinel_recovery": {
+        "enabled": true,
+        "description": "Recovery and liquidation - handles overdue loans",
+        "triggers": ["overdue", "missed payment", "default", "liquidate"]
+      },
+      "sentinel_wdk": {
+        "enabled": true,
+        "description": "WDK wallet operations - on-chain USDT transfers",
+        "triggers": ["balance", "send usdt", "transfer", "wallet"]
+      }
+    }
+  },
+
+  "agent": {
+    "model": "llama-3.3-70b-versatile",
+    "provider": "groq",
+    "temperature": 0.3,
+    "maxTokens": 1024,
+    "systemPrompt": "You are Sentinel, an autonomous AI lending agent for the Agent Economy. You help agents with credit assessment, loan requests, and wallet operations."
+  },
+
+  "tools": {
+    "wdk": {
+      "enabled": true,
+      "source": "@tetherto/wdk-agent-skills"
+    },
+    "sentinel-api": {
+      "enabled": true,
+      "baseUrl": "http://localhost:3000"
+    }
+  }
+}
