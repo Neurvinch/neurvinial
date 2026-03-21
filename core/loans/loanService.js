@@ -294,9 +294,67 @@ async function markDefault(loanId) {
 
   loan.status = LOAN_STATUSES.DEFAULTED;
   loan.defaultedAt = new Date();
-  await loan.save();
 
   const agent = await Agent.findOne({ did: loan.borrowerDid });
+
+  // ---- Collateral Liquidation ----
+  // If the loan had collateral requirements, liquidate it
+  let liquidationTxHash = null;
+  if (loan.collateralRequired && loan.collateralRequired > 0) {
+    try {
+      logger.info('Liquidating collateral', {
+        loanId,
+        collateralAmount: loan.collateralRequired,
+        borrowerWallet: agent.walletAddress
+      });
+
+      // Transfer collateral from borrower to Sentinel treasury
+      // Note: In production, the collateral would already be locked in a smart contract
+      // For this demo, we simulate the liquidation transfer
+      const liquidationResult = await walletManager.sendUSDT(
+        await walletManager.getSentinelAddress(),
+        loan.collateralRequired
+      );
+
+      liquidationTxHash = liquidationResult.hash;
+
+      // Record liquidation transaction
+      const liquidationTx = new Transaction({
+        txHash: liquidationTxHash,
+        from: agent.walletAddress,
+        to: await walletManager.getSentinelAddress(),
+        amount: loan.collateralRequired,
+        type: 'collateral_liquidation',
+        loanId: loan.loanId,
+        blockchain: config.wdk.blockchain,
+        network: config.wdk.network,
+        status: 'confirmed',
+        confirmedAt: new Date()
+      });
+      await liquidationTx.save();
+
+      loan.collateralLiquidated = true;
+      loan.collateralLiquidationTxHash = liquidationTxHash;
+
+      logger.info('Collateral liquidated successfully', {
+        loanId,
+        txHash: liquidationTxHash,
+        amount: loan.collateralRequired
+      });
+    } catch (err) {
+      logger.error('Collateral liquidation failed', {
+        loanId,
+        error: err.message
+      });
+      // Continue with default process even if liquidation fails
+      loan.collateralLiquidated = false;
+      loan.liquidationError = err.message;
+    }
+  }
+
+  await loan.save();
+
+  // Update agent credit profile
   agent.totalDefaulted += 1;
   agent.creditScore = Math.max(0, agent.creditScore + SCORE_ADJUSTMENTS.DEFAULT_PENALTY);
   agent.tier = getTierFromScore(agent.creditScore).tierLetter;
@@ -314,7 +372,8 @@ async function markDefault(loanId) {
     loanId,
     did: agent.did,
     newScore: agent.creditScore,
-    blacklisted: agent.isBlacklisted
+    blacklisted: agent.isBlacklisted,
+    collateralLiquidated: loan.collateralLiquidated
   });
 
   return {
@@ -324,7 +383,11 @@ async function markDefault(loanId) {
       creditScore: agent.creditScore,
       tier: agent.tier,
       isBlacklisted: agent.isBlacklisted
-    }
+    },
+    liquidation: liquidationTxHash ? {
+      txHash: liquidationTxHash,
+      amount: loan.collateralRequired
+    } : null
   };
 }
 
