@@ -676,6 +676,610 @@ Keep repaying on time to improve your credit!`;
 };
 
 /**
+ * Handle WhatsApp balance command - Show user's loan portfolio
+ */
+const handleWhatsAppBalance = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to see your balance.');
+      return;
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      const loans = await Loan.find({ borrowerDid: context.did });
+
+      const activeLoans = loans.filter(l => ['approved', 'disbursed'].includes(l.status));
+      const repaidLoans = loans.filter(l => l.status === 'repaid');
+      const totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
+      const totalRepaid = repaidLoans.reduce((sum, l) => sum + l.amount, 0);
+      const activeLoanTotal = activeLoans.reduce((sum, l) => sum + l.amount, 0);
+
+      // Get wallet address
+      const agent = await Agent.findOne({ did: context.did });
+      const walletAddress = agent?.walletAddress || 'Not set';
+      const shortWallet = walletAddress.length > 20
+        ? `${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}`
+        : walletAddress;
+
+      const message = `💰 *Your Loan Portfolio*
+
+📊 Total Borrowed: $${totalBorrowed} USDT
+✅ Total Repaid: $${totalRepaid} USDT
+⏳ Active Loans: $${activeLoanTotal} USDT
+📈 Loan Count: ${loans.length}
+
+🔄 Active: ${activeLoans.length} loans
+✓ Completed: ${repaidLoans.length} loans
+
+🔐 Your Wallet: ${shortWallet}
+
+Send "history" to see all loans`;
+
+      await sendWhatsAppMessage(phoneNumber, message);
+    } else {
+      await sendWhatsAppMessage(phoneNumber, '📭 No loans yet.');
+    }
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Balance check failed: ${error.message}`);
+    logger.error('WhatsApp balance failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp wallet command - Show wallet information
+ */
+const handleWhatsAppWallet = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to generate your wallet.');
+      return;
+    }
+
+    // Get wallet address from database
+    const agent = await Agent.findOne({ did: context.did });
+    const walletAddress = agent?.walletAddress || 'Not generated yet';
+
+    const message = `💳 *Your Wallet Information*
+
+Address: ${walletAddress}
+
+Network: Ethereum Sepolia
+Token: USDT (ERC-20)
+ERC-4337: ✅ Gasless transactions enabled
+
+🔗 View on Etherscan:
+https://sepolia.etherscan.io/address/${walletAddress}
+
+💡 Important:
+• This is your REAL Ethereum wallet
+• You can receive USDT without gas fees
+• Loans are sent directly to this address
+• Keep this address safe!
+
+📊 Send "balance" to see your loan portfolio`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp wallet failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp tiers command - Show credit tiers
+ */
+const handleWhatsAppTiers = async (phoneNumber) => {
+  const tiersMessage = `📊 *SENTINEL Credit Tiers*
+
+🏆 Tier A (Score: 80-100)
+• Max Loan: $5,000 USDT
+• Interest: 3.5% APR
+• Profile: Excellent repayment history
+
+🥈 Tier B (Score: 60-79)
+• Max Loan: $2,000 USDT
+• Interest: 5.0% APR
+• Profile: Good credit, minor delays ok
+
+🥉 Tier C (Score: 40-59)
+• Max Loan: $500 USDT
+• Interest: 8.0% APR
+• Profile: New user or some defaults
+
+⛔ Tier D (Score: 0-39)
+• Max Loan: DENIED
+• Interest: N/A
+• Profile: High risk, multiple defaults
+
+💡 How to Upgrade:
+1. Repay loans on time → +5 points
+2. Build longer history → Better ML score
+3. Avoid defaults → No -15 penalty
+
+📈 Send "status" to see your current tier
+💰 Send "upgrade" for personalized tips`;
+
+  await sendWhatsAppMessage(phoneNumber, tiersMessage);
+};
+
+/**
+ * Handle WhatsApp calculator command - Calculate loan costs
+ */
+const handleWhatsAppCalculator = async (phoneNumber, amount) => {
+  if (!amount || !amount.trim()) {
+    const message = `🧮 *Loan Calculator*
+
+Usage: calculator [amount]
+
+Examples:
+• calculator 100
+• calculator 500
+• calculator 1000
+
+💡 I'll calculate the total cost based on your credit tier!
+
+📊 Send "status" first to see your current tier and rates.`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+    return;
+  }
+
+  const loanAmount = parseFloat(amount.trim());
+  if (isNaN(loanAmount) || loanAmount <= 0) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please provide a valid loan amount (e.g., calculator 500)');
+    return;
+  }
+
+  // Calculate for each tier
+  const calculations = [
+    { tier: 'A', rate: 3.5, maxLoan: 5000 },
+    { tier: 'B', rate: 5.0, maxLoan: 2000 },
+    { tier: 'C', rate: 8.0, maxLoan: 500 },
+  ];
+
+  let calcText = `🧮 *Loan Calculator: $${loanAmount} USDT*\n\n`;
+
+  calculations.forEach(({ tier, rate, maxLoan }) => {
+    if (loanAmount <= maxLoan) {
+      const interest = (loanAmount * rate) / 100;
+      const total = loanAmount + interest;
+      calcText += `Tier ${tier} (${rate}% APR):
+• Interest: $${interest.toFixed(2)} USDT
+• Total Due: $${total.toFixed(2)} USDT
+• Term: 30 days
+• Status: ✅ Eligible\n\n`;
+    } else {
+      calcText += `Tier ${tier} (${rate}% APR):
+• Max Loan: $${maxLoan}
+• Your Request: $${loanAmount}
+• Status: ❌ Exceeds limit\n\n`;
+    }
+  });
+
+  calcText += `💡 Note: Calculations are for 30-day terms
+📊 Your actual rate depends on your credit tier
+🚀 ERC-4337: No gas fees for receiving USDT!`;
+
+  await sendWhatsAppMessage(phoneNumber, calcText);
+};
+
+/**
+ * Handle WhatsApp profile command - Show user profile
+ */
+const handleWhatsAppProfile = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to view your profile.');
+      return;
+    }
+
+    const profileMessage = `👤 *Your SENTINEL Profile*
+
+🆔 Identity:
+• DID: ${context.did}
+• Phone: ${phoneNumber}
+• Registered: ${new Date(context.registeredAt).toDateString()}
+
+📊 Credit Profile:
+• Score: ${context.creditScore || 50}
+• Tier: ${context.tier || 'C'}
+
+💰 Quick Actions:
+• Send "status" - Check latest score
+• Send "request 300" - Apply for loan
+• Send "history" - View all loans`;
+
+    await sendWhatsAppMessage(phoneNumber, profileMessage);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp profile failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp upgrade command - Credit improvement tips
+ */
+const handleWhatsAppUpgrade = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to see upgrade tips.');
+      return;
+    }
+
+    const currentScore = context.creditScore || 50;
+    const currentTier = context.tier || 'C';
+
+    let upgradeMessage = `📈 *Credit Improvement Guide*
+
+Current Status:
+• Score: ${currentScore}/100
+• Tier: ${currentTier}
+
+🎯 Next Milestone:`;
+
+    if (currentScore < 60) {
+      upgradeMessage += `
+• Target: Tier B (Score 60+)
+• Max Loan: $2,000 USDT
+• Interest Rate: 5.0% APR
+
+💡 How to reach Tier B:
+• Repay ${Math.ceil((60 - currentScore) / 5)} loans on time
+• Each on-time repayment = +5 points
+• Avoid any defaults (-15 points)`;
+    } else if (currentScore < 80) {
+      upgradeMessage += `
+• Target: Tier A (Score 80+)
+• Max Loan: $5,000 USDT
+• Interest Rate: 3.5% APR
+
+💡 How to reach Tier A:
+• Repay ${Math.ceil((80 - currentScore) / 5)} more loans on time
+• Build consistent payment history
+• Maintain zero defaults`;
+    } else {
+      upgradeMessage += `
+• Status: Already at Tier A! 🏆
+• You have the best rates available
+• Keep maintaining excellent credit`;
+    }
+
+    upgradeMessage += `
+
+🚀 Pro Tips:
+• Start with smaller loans and repay on time
+• Build a consistent history over time
+• Never miss a payment deadline
+• Use "calculator" to plan affordable loans
+
+📊 Send "status" to check your current score`;
+
+    await sendWhatsAppMessage(phoneNumber, upgradeMessage);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp upgrade failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp fees command - Show fee structure
+ */
+const handleWhatsAppFees = async (phoneNumber) => {
+  const feesMessage = `💸 *SENTINEL Fee Structure*
+
+🆓 No Hidden Fees:
+• Loan origination: FREE
+• Account setup: FREE
+• Credit checks: FREE
+• Repayment processing: FREE
+
+💰 Only Interest Charges:
+• Tier A: 3.5% APR
+• Tier B: 5.0% APR
+• Tier C: 8.0% APR
+• Tier D: No loans available
+
+⚡ ERC-4337 Benefits:
+• Gas fees: SPONSORED
+• You receive USDT without needing ETH
+• No blockchain transaction costs
+
+🧮 Example (Tier C, $100 loan):
+• Principal: $100 USDT
+• Interest (30 days): $6.67 USDT
+• Total repayment: $106.67 USDT
+• Gas fees: $0 (sponsored!)
+
+💡 Send "calculator [amount]" for exact calculations`;
+
+  await sendWhatsAppMessage(phoneNumber, feesMessage);
+};
+
+/**
+ * Handle WhatsApp support command - Show support information
+ */
+const handleWhatsAppSupport = async (phoneNumber) => {
+  const supportMessage = `🆘 *SENTINEL Support*
+
+🤖 Self-Help:
+• Send "help" - Full command list
+• Send "status" - Check account health
+• Send "tiers" - Understand credit system
+• Send "calculator 100" - Estimate costs
+
+⚡ System Status:
+• Live URL: https://neurvinial.onrender.com
+• Health: Send "health" to check
+• Network: Ethereum Sepolia testnet
+
+🔧 Troubleshooting:
+• Registration issues → Try "register" again
+• Loan not received → Check "history"
+• Score questions → Send "upgrade"
+
+📞 Need Human Help?
+• GitHub: github.com/Neurvinch/neurvinial
+• Live demo available 24/7
+• This is a hackathon project
+
+💡 Pro tip: Most issues resolve by trying the command again in 1-2 minutes.`;
+
+  await sendWhatsAppMessage(phoneNumber, supportMessage);
+};
+
+/**
+ * Handle WhatsApp health command - Show system health
+ */
+const handleWhatsAppHealth = async (phoneNumber) => {
+  try {
+    const message = `🏥 *System Health Check*
+
+🤖 Bot Status: ✅ Online
+📱 WhatsApp: ✅ Connected
+🗄️ Database: ${mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Disconnected'}
+
+🔗 Services:
+• API: https://neurvinial.onrender.com
+• Network: Ethereum Sepolia
+• WDK Status: ${walletManager.isInitialized() ? '✅ Ready' : '❌ Not initialized'}
+
+⚡ ERC-4337:
+• Bundler: Pimlico
+• Paymaster: Candide
+• Status: ✅ Gasless transfers enabled
+
+💰 Send "balance" to check your portfolio
+🔄 Send "status" to refresh your credit score
+
+Last updated: ${new Date().toISOString()}`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Health check failed: ${error.message}`);
+    logger.error('WhatsApp health check failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp fund command - Admin treasury funding
+ */
+const handleWhatsAppFund = async (phoneNumber, amount) => {
+  const fundMessage = `💰 *Treasury Funding*
+
+⚠️ Admin-only feature
+
+This command is for treasury management.
+Regular users cannot fund the treasury.
+
+💡 For users:
+• Send "balance" - Check your loans
+• Send "request 100" - Apply for a loan
+• Send "status" - Check credit score
+
+🏦 Treasury info available at:
+https://neurvinial.onrender.com/health`;
+
+  await sendWhatsAppMessage(phoneNumber, fundMessage);
+};
+
+/**
+ * Handle WhatsApp summary command - Quick overview
+ */
+const handleWhatsAppSummary = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      const quickStart = `📋 *SENTINEL Quick Start*
+
+🆔 Status: Not registered
+🎯 Next step: Send "register"
+
+💰 What is SENTINEL?
+• AI-powered lending agent
+• Instant credit decisions
+• Real USDT loans via blockchain
+• ERC-4337 gasless transactions
+
+🚀 Quick flow:
+1. register
+2. status
+3. request 300
+4. Get USDT in your wallet!
+
+💡 Send "register" to begin`;
+
+      await sendWhatsAppMessage(phoneNumber, quickStart);
+      return;
+    }
+
+    // Registered user summary
+    let loanCount = 0;
+    let totalBorrowed = 0;
+    let activeLoans = 0;
+
+    if (mongoose.connection.readyState === 1) {
+      const loans = await Loan.find({ borrowerDid: context.did });
+      loanCount = loans.length;
+      totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
+      activeLoans = loans.filter(l => ['approved', 'disbursed'].includes(l.status)).length;
+    }
+
+    const summaryMessage = `📋 *Your SENTINEL Summary*
+
+👤 Profile:
+• Credit Score: ${context.creditScore || 50}
+• Tier: ${context.tier || 'C'}
+• Status: ✅ Active
+
+💰 Loan History:
+• Total Loans: ${loanCount}
+• Total Borrowed: $${totalBorrowed} USDT
+• Active Loans: ${activeLoans}
+
+🎯 Quick Actions:
+• "request 300" - Apply for loan
+• "status" - Refresh credit score
+• "history" - View all loans
+• "calculator 500" - Estimate costs
+
+🚀 ERC-4337 enabled - Get USDT without gas fees!`;
+
+    await sendWhatsAppMessage(phoneNumber, summaryMessage);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Summary failed: ${error.message}`);
+    logger.error('WhatsApp summary failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp transactions command - Show blockchain transactions
+ */
+const handleWhatsAppTransactions = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to view transactions.');
+      return;
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      const loans = await Loan.find({
+        borrowerDid: context.did,
+        disbursementTxHash: { $exists: true, $ne: null }
+      }).sort({ createdAt: -1 }).limit(5);
+
+      if (loans.length === 0) {
+        await sendWhatsAppMessage(phoneNumber, `⛓️ *Blockchain Transactions*
+
+No on-chain transactions yet.
+
+💡 To create your first transaction:
+1. Send "request 100"
+2. Wait for approval
+3. Get USDT sent to your wallet on-chain
+
+🔗 All transactions are viewable on Etherscan
+📱 Send "wallet" to see your address`);
+        return;
+      }
+
+      let txMessage = `⛓️ *Your Blockchain Transactions*\n\n`;
+
+      loans.forEach((loan, index) => {
+        const shortTx = loan.disbursementTxHash.substring(0, 12) + '...';
+        const date = new Date(loan.disbursedAt || loan.createdAt).toLocaleDateString();
+
+        txMessage += `${index + 1}. $${loan.amount} USDT
+   TX: ${shortTx}
+   Date: ${date}
+   Status: ${loan.status}
+
+`;
+      });
+
+      txMessage += `🔗 View full transactions on Etherscan:
+https://sepolia.etherscan.io/
+
+💡 Send "wallet" to see your wallet address`;
+
+      await sendWhatsAppMessage(phoneNumber, txMessage);
+    } else {
+      await sendWhatsAppMessage(phoneNumber, '⛓️ Database not available to check transactions.');
+    }
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp transactions failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp notify command - Notification settings
+ */
+const handleWhatsAppNotify = async (phoneNumber, setting) => {
+  const notifyMessage = `🔔 *Notification Settings*
+
+📱 WhatsApp Alerts:
+• Payment reminders: ✅ Enabled
+• Loan approvals: ✅ Enabled
+• Default warnings: ✅ Enabled
+• System updates: ✅ Enabled
+
+⏰ Timing:
+• 24h before due date
+• At loan approval
+• When payments are late
+
+💡 Settings:
+WhatsApp notifications are automatically enabled.
+You'll receive important updates about your loans.
+
+🔕 To reduce notifications:
+Contact support or use Telegram instead.
+
+📊 Send "status" to check current loans`;
+
+  await sendWhatsAppMessage(phoneNumber, notifyMessage);
+};
+
+/**
+ * Handle WhatsApp cancel command - Cancel pending loans
+ */
+const handleWhatsAppCancel = async (phoneNumber) => {
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+    if (!context.did) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first.');
+      return;
+    }
+
+    const message = `❌ *Cancel Pending Loan*
+
+Any pending loans have been cancelled.
+No funds were disbursed.
+
+✅ You can submit a new loan request anytime with "request [amount]"
+
+📊 Send "status" to check your current credit profile.`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp cancel failed', { error: error.message });
+  }
+};
+
+/**
  * Handle WhatsApp help command.
  */
 const handleWhatsAppHelp = async (phoneNumber) => {
@@ -686,22 +1290,36 @@ const handleWhatsAppHelp = async (phoneNumber) => {
 2. Send: *status* - Check credit score
 3. Send: *request 300* - Apply for loan
 
-💡 *More Commands:*
+💡 *All Commands:*
+• *register* - Create account
+• *status* - Check credit score
+• *request 100* - Apply for loan
 • *limit* - See max borrowing amount
 • *terms* - View loan interest rates
 • *approve* - Check if eligible
 • *history* - View past loans
 • *balance* - Your loan portfolio
 • *repay* - Mark loan as repaid
+• *wallet* - Show wallet address
+• *tiers* - Credit tier system
+• *calculator 100* - Calculate costs
+• *profile* - Your account info
+• *upgrade* - Credit improvement tips
+• *fees* - Fee structure
+• *summary* - Quick overview
+• *transactions* - Blockchain TXs
+• *health* - System status
+• *support* - Get help
 • *help* - Show this menu
 
-📱 *Example Flows:*
+📱 *Example Flow:*
 → register
 → status
 → request 500
-→ repay [loan-id]
+→ repay
 
-💰 Token: USDT on Ethereum Sepolia`;
+💰 Token: USDT on Ethereum Sepolia
+⚡ ERC-4337: Gasless transactions enabled`;
 
   await sendWhatsAppMessage(phoneNumber, helpMessage);
 };
@@ -732,58 +1350,36 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
     const loanId = command.split(' ')[1];
     await handleWhatsAppRepay(phoneNumber, loanId);
   } else if (command === 'balance') {
-    try {
-      // Get user context first
-      const context = await getOrCreateWhatsAppContext(phoneNumber);
-
-      if (!context.did) {
-        await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to see your balance.');
-        return;
-      }
-
-      if (mongoose.connection.readyState === 1) {
-        // Show user's loan portfolio (not treasury)
-        const loans = await Loan.find({ borrowerDid: context.did });
-
-        const activeLoans = loans.filter(l => ['approved', 'disbursed'].includes(l.status));
-        const repaidLoans = loans.filter(l => l.status === 'repaid');
-        const totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
-        const totalRepaid = repaidLoans.reduce((sum, l) => sum + l.amount, 0);
-        const activeLoanTotal = activeLoans.reduce((sum, l) => sum + l.amount, 0);
-
-        // Get wallet address
-        const agent = await Agent.findOne({ did: context.did });
-        const walletAddress = agent?.walletAddress || 'Not set';
-        const shortWallet = walletAddress.length > 20
-          ? `${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}`
-          : walletAddress;
-
-        const message = `💰 *Your Loan Portfolio*
-
-📊 Total Borrowed: $${totalBorrowed} USDT
-✅ Total Repaid: $${totalRepaid} USDT
-⏳ Active Loans: $${activeLoanTotal} USDT
-📈 Loan Count: ${loans.length}
-
-🔄 Active: ${activeLoans.length} loans
-✓ Completed: ${repaidLoans.length} loans
-
-🔐 Your Wallet: ${shortWallet}
-
-Send "history" to see all loans`;
-
-        await sendWhatsAppMessage(phoneNumber, message);
-      } else {
-        // Fallback to treasury info if DB not connected
-        const ethBal = await walletManager.getSentinelETHBalance();
-        const usdtBal = await walletManager.getSentinelUSDTBalance();
-
-        const message = `💰 *Sentinel Treasury*\n\nETH: ${ethBal.balance}\nUSDT: ${usdtBal.balance}`;
-        await sendWhatsAppMessage(phoneNumber, message);
-      }
-    } catch (error) {
-      await sendWhatsAppMessage(phoneNumber, `❌ Balance check failed: ${error.message}`);
-    }
+    await handleWhatsAppBalance(phoneNumber);
+  } else if (command === 'wallet' || command === 'address') {
+    await handleWhatsAppWallet(phoneNumber);
+  } else if (command === 'tiers' || command === 'levels' || command === 'grades') {
+    await handleWhatsAppTiers(phoneNumber);
+  } else if (command.startsWith('calculator') || command.startsWith('calc')) {
+    const amount = command.split(' ')[1];
+    await handleWhatsAppCalculator(phoneNumber, amount);
+  } else if (command === 'profile' || command === 'account' || command === 'info') {
+    await handleWhatsAppProfile(phoneNumber);
+  } else if (command === 'upgrade' || command === 'improve' || command === 'tips') {
+    await handleWhatsAppUpgrade(phoneNumber);
+  } else if (command === 'fees' || command === 'cost' || command === 'pricing') {
+    await handleWhatsAppFees(phoneNumber);
+  } else if (command === 'support' || command === 'contact' || command === 'issue') {
+    await handleWhatsAppSupport(phoneNumber);
+  } else if (command === 'health' || command === 'system' || command === 'uptime') {
+    await handleWhatsAppHealth(phoneNumber);
+  } else if (command.startsWith('fund') || command === 'treasury') {
+    const amount = command.split(' ')[1];
+    await handleWhatsAppFund(phoneNumber, amount);
+  } else if (command === 'summary' || command === 'overview' || command === 'quick') {
+    await handleWhatsAppSummary(phoneNumber);
+  } else if (command === 'transactions' || command === 'txs' || command === 'chain') {
+    await handleWhatsAppTransactions(phoneNumber);
+  } else if (command.startsWith('notify') || command === 'alerts') {
+    const setting = command.split(' ')[1];
+    await handleWhatsAppNotify(phoneNumber, setting);
+  } else if (command === 'cancel' || command === 'reject') {
+    await handleWhatsAppCancel(phoneNumber);
   } else if (command === 'help' || command === '?') {
     await handleWhatsAppHelp(phoneNumber);
   } else {
@@ -855,6 +1451,20 @@ module.exports = {
   handleWhatsAppApprove,
   handleWhatsAppHistory,
   handleWhatsAppRepay,
+  handleWhatsAppBalance,
+  handleWhatsAppWallet,
+  handleWhatsAppTiers,
+  handleWhatsAppCalculator,
+  handleWhatsAppProfile,
+  handleWhatsAppUpgrade,
+  handleWhatsAppFees,
+  handleWhatsAppSupport,
+  handleWhatsAppHealth,
+  handleWhatsAppFund,
+  handleWhatsAppSummary,
+  handleWhatsAppTransactions,
+  handleWhatsAppNotify,
+  handleWhatsAppCancel,
   handleWhatsAppHelp,
   sendWhatsAppMessage,
   parseWhatsAppWebhook,
