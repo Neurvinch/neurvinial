@@ -731,40 +731,85 @@ https://neurvinial.onrender.com/health
 }
 
 async function handleHelp(msg) {
-  const helpText = `ℹ️ *SENTINEL Bot Commands*
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const context = await getUserContext(chatId, userId);
 
-🎯 **Quick Start:**
-• /register - Create account & wallet
-• /status - Check credit score
-• /request 300 - Apply for loan
+  try {
+    // Use OpenClaw for intelligent help based on user context
+    const { processIntelligentCommand } = require('../agent/openclawIntegration');
+
+    const result = await processIntelligentCommand({
+      command: 'help',
+      user: { id: userId, did: context.did },
+      context: {
+        registered: context.registered,
+        creditScore: context.creditScore,
+        tier: context.tier,
+        walletAddress: context.walletAddress
+      },
+      channel: 'telegram',
+      message: msg.text
+    });
+
+    // If OpenClaw provides intelligent response, use it
+    if (result.result && result.result.action !== 'error') {
+      const response = result.result.data?.response || result.result.reasoning;
+      if (response) {
+        sendMessage(chatId, response);
+        return;
+      }
+    }
+  } catch (error) {
+    logger.warn('OpenClaw help failed, using fallback', { error: error.message });
+  }
+
+  // Fallback: Context-aware help without OpenClaw
+  let helpText;
+
+  if (!context.registered) {
+    helpText = `🚀 *Welcome to SENTINEL!*
+
+*Get started in 2 steps:*
+1️⃣ /register - Create your account & wallet
+2️⃣ /request 300 - Apply for your first loan!
+
+💰 *What you'll get:*
+• Real USDT loans (starting $500 max)
+• ERC-4337 gasless transactions
+• AI credit scoring
+• 30-day loan terms
+
+⚡ *Ready?* Send /register to begin`;
+  } else {
+    const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
+    const maxLoan = tierLimits[context.tier] || 500;
+
+    helpText = `📊 *SENTINEL Commands* (Tier ${context.tier})
+
+💰 **Your max loan:** $${maxLoan} USDT
+
+🎯 **Quick Actions:**
+• /status - Check credit (Score: ${context.creditScore || 50})
+• /request ${Math.min(maxLoan, 300)} - Apply for loan
+• /wallet - View your address
+• /balance - Check loan portfolio
 
 💰 **Loan Management:**
 • /approve - Disburse pending loan
-• /repay - Mark loan as repaid
-• /history - View all loans
-• /balance - Loan portfolio
+• /repay - Mark loan repaid (improves credit!)
+• /history - View loan history
 
-📊 **Account Info:**
-• /wallet - View wallet address
-• /health - System status
-• /help - Show this menu
+🚀 **Tips for Tier ${context.tier}:**
+${context.tier === 'A' ? '🌟 Excellent credit! Max loans up to $5,000 at 3.5% APR' :
+  context.tier === 'B' ? '✅ Good credit! Repay on-time to reach Tier A (3.5% APR)' :
+  context.tier === 'C' ? '📈 Build credit by repaying loans on-time to unlock higher limits' :
+  '❌ Focus on building credit history to qualify for loans'}
 
-🚀 **Real Features:**
-• Real USDT loans on Ethereum Sepolia
-• ERC-4337 gasless transactions
-• AI-powered credit scoring
-• On-chain transaction history
+⚡ **ERC-4337:** All transfers are gasless!`;
+  }
 
-💡 **Example Flow:**
-1. /register (create account)
-2. /status (check credit: Tier C, $500 max)
-3. /request 300 (apply for $300 loan)
-4. /approve (receive USDT instantly)
-5. /repay (improve credit score)
-
-⚡ **Powered by ERC-4337 Account Abstraction**`;
-
-  sendMessage(msg.chat.id, helpText);
+  sendMessage(chatId, helpText);
 }
 
 /**
@@ -808,8 +853,57 @@ async function handleMessage(msg) {
     } else if (text.startsWith('/help')) {
       await handleHelp(msg);
     } else {
-      // Unknown command
-      sendMessage(chatId, `❓ Unknown command: ${text}\n\nSend /help to see available commands.`);
+      // Unknown command - use OpenClaw for intelligent response
+      const userId = msg.from?.id;
+      const context = await getUserContext(chatId, userId);
+
+      try {
+        const { processIntelligentCommand } = require('../agent/openclawIntegration');
+
+        const result = await processIntelligentCommand({
+          command: 'unknown',
+          user: { id: userId, did: context.did },
+          context: {
+            registered: context.registered,
+            creditScore: context.creditScore,
+            tier: context.tier,
+            message: text
+          },
+          channel: 'telegram',
+          message: text
+        });
+
+        // If OpenClaw provides an intelligent response
+        if (result.result && result.result.action !== 'error') {
+          const response = result.result.data?.response ||
+                          result.result.reasoning ||
+                          `I understand you're asking about "${text}". Here's what I can help with:\n\n` +
+                          (context.registered ?
+                            `💰 Send /request ${Math.min(500, context.tier === 'A' ? 5000 : context.tier === 'B' ? 2000 : 500)} for a loan\n📊 Send /status for your credit info\n💳 Send /wallet for your address` :
+                            `🚀 Send /register to create your account\n💰 Then /request 300 for your first loan\n❓ Send /help for more commands`);
+
+          sendMessage(chatId, response);
+          return;
+        }
+      } catch (error) {
+        logger.warn('OpenClaw unknown command failed, using fallback', { error: error.message });
+      }
+
+      // Fallback: Smart unknown command response
+      const suggestions = context.registered ?
+        ['/status', '/request 300', '/balance', '/wallet'] :
+        ['/register', '/help'];
+
+      const response = `🤔 I didn't understand "${text}"
+
+💡 **Try these commands:**
+${suggestions.map(cmd => `• ${cmd}`).join('\n')}
+
+❓ Send /help for complete list
+
+${!context.registered ? '\n🚀 **New here?** Send /register to get started!' : ''}`;
+
+      sendMessage(chatId, response);
     }
   } catch (error) {
     logger.error('Error handling message', { error: error.message, chatId, text });

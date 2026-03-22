@@ -33,6 +33,13 @@
           "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}",
           "WDK_NETWORK": "${WDK_NETWORK:-sepolia}"
         }
+      },
+      "sentinel_bot_commands": {
+        "enabled": true,
+        "description": "Intelligent bot command handling with context-aware reasoning",
+        "env": {
+          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}"
+        }
       }
     }
   },

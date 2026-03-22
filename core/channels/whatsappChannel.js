@@ -775,37 +775,89 @@ https://sepolia.etherscan.io/address/${walletAddress}
  * Handle WhatsApp help command.
  */
 const handleWhatsAppHelp = async (phoneNumber) => {
-  const helpMessage = `ℹ️ *SENTINEL WhatsApp Bot*
+  try {
+    const context = await getOrCreateWhatsAppContext(phoneNumber);
 
-🎯 *Quick Start:*
-1. Send: *register* - Create account
-2. Send: *status* - Check credit score
-3. Send: *request 300* - Apply for loan
+    // Use OpenClaw for intelligent help based on user context
+    const { processIntelligentCommand } = require('../agent/openclawIntegration');
 
-💡 *All Commands:*
-• *register* - Create account
-• *status* - Check credit score
-• *request 100* - Apply for loan
-• *limit* - See max borrowing amount
-• *terms* - View loan interest rates
+    try {
+      const result = await processIntelligentCommand({
+        command: 'help',
+        user: { phoneNumber, did: context.did },
+        context: {
+          registered: context.registered,
+          creditScore: context.creditScore,
+          tier: context.tier
+        },
+        channel: 'whatsapp',
+        message: 'help'
+      });
+
+      // If OpenClaw provides intelligent response, use it
+      if (result.result && result.result.action !== 'error') {
+        const response = result.result.data?.response || result.result.reasoning;
+        if (response) {
+          await sendWhatsAppMessage(phoneNumber, response);
+          return;
+        }
+      }
+    } catch (error) {
+      logger.warn('OpenClaw help failed, using adaptive fallback', { error: error.message });
+    }
+
+    // Fallback: Context-aware help
+    let helpMessage;
+
+    if (!context.registered) {
+      helpMessage = `🚀 *Welcome to SENTINEL!*
+
+*Start your DeFi journey:*
+1️⃣ Send: *register*
+2️⃣ Send: *request 300*
+
+💰 *What you get:*
+• Real USDT loans (up to $500)
+• ERC-4337 gasless transfers
+• AI credit scoring
+• 30-day terms
+
+⚡ *Ready?* Send *register* now`;
+    } else {
+      const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
+      const maxLoan = tierLimits[context.tier] || 500;
+
+      helpMessage = `📊 *SENTINEL Commands* (Tier ${context.tier})
+
+💰 *Your max loan:* $${maxLoan} USDT
+
+🎯 *Quick Actions:*
+• *status* - Credit score (${context.creditScore || 50})
+• *request ${Math.min(maxLoan, 300)}* - Apply for loan
+• *wallet* - Your address
+• *balance* - Loan portfolio
+
+💰 *Loan Commands:*
 • *approve* - Disburse pending loan
-• *history* - View past loans
-• *balance* - Your loan portfolio
-• *repay* - Mark loan as repaid
-• *wallet* - Show wallet address
-• *help* - Show this menu
+• *repay* - Mark repaid (improves credit!)
+• *history* - Past loans
+• *terms* - Check rates
 
-📱 *Example Flow:*
-→ register
-→ status
-→ request 500
-→ approve
-→ repay
+🚀 *Tier ${context.tier} Tips:*
+${context.tier === 'A' ? '🌟 Excellent! Max $5,000 at 3.5% APR' :
+  context.tier === 'B' ? '✅ Good credit! Repay on-time → Tier A' :
+  context.tier === 'C' ? '📈 Build credit → unlock higher limits' :
+  '❌ Build credit history to qualify'}
 
-💰 Token: USDT on Ethereum Sepolia
-⚡ ERC-4337: Gasless transactions enabled`;
+⚡ *All transfers are gasless via ERC-4337!*`;
+    }
 
-  await sendWhatsAppMessage(phoneNumber, helpMessage);
+    await sendWhatsAppMessage(phoneNumber, helpMessage);
+
+  } catch (error) {
+    logger.error('WhatsApp help failed', { error: error.message });
+    await sendWhatsAppMessage(phoneNumber, 'ℹ️ Send *register*, *status*, *request 300*, or *help* for commands.');
+  }
 };
 
 /**
@@ -840,18 +892,56 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
     } else if (command === 'help' || command === '?') {
       await handleWhatsAppHelp(phoneNumber);
     } else {
-      // Auto-help for unknown commands
-      const greeting = `👋 Welcome to SENTINEL Lending!
+      // Unknown command - use OpenClaw for intelligent response
+      const context = await getOrCreateWhatsAppContext(phoneNumber);
 
-Type a command:
-• *register* - Create account
-• *status* - Check score
-• *request 300* - Get a loan
-• *limit* - See max amount
-• *help* - All commands
+      try {
+        const { processIntelligentCommand } = require('../agent/openclawIntegration');
 
-Quick: Send "register" to start!`;
-      await sendWhatsAppMessage(phoneNumber, greeting);
+        const result = await processIntelligentCommand({
+          command: 'unknown',
+          user: { phoneNumber, did: context.did },
+          context: {
+            registered: context.registered,
+            creditScore: context.creditScore,
+            tier: context.tier,
+            message: messageText
+          },
+          channel: 'whatsapp',
+          message: messageText
+        });
+
+        // If OpenClaw provides an intelligent response
+        if (result.result && result.result.action !== 'error') {
+          const response = result.result.data?.response ||
+                          result.result.reasoning ||
+                          `I understand you're asking about "${messageText}". Here's what I can help with:\n\n` +
+                          (context.registered ?
+                            `💰 Send *request ${Math.min(500, context.tier === 'A' ? 5000 : context.tier === 'B' ? 2000 : 500)}* for a loan\n📊 Send *status* for credit info\n💳 Send *wallet* for address` :
+                            `🚀 Send *register* to create account\n💰 Then *request 300* for your first loan\n❓ Send *help* for more commands`);
+
+          await sendWhatsAppMessage(phoneNumber, response);
+          return;
+        }
+      } catch (error) {
+        logger.warn('OpenClaw unknown command failed, using fallback', { error: error.message });
+      }
+
+      // Fallback: Smart unknown command response
+      const suggestions = context.registered ?
+        ['*status*', '*request 300*', '*balance*', '*wallet*'] :
+        ['*register*', '*help*'];
+
+      const response = `🤔 I didn't understand "${messageText}"
+
+💡 *Try these:*
+${suggestions.join(', ')}
+
+❓ Send *help* for complete list
+
+${!context.registered ? '\n🚀 *New here?* Send *register* to start!' : ''}`;
+
+      await sendWhatsAppMessage(phoneNumber, response);
     }
   } catch (error) {
     logger.error('Error handling WhatsApp message', { error: error.message, phoneNumber, command });

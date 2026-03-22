@@ -59,6 +59,11 @@
         "enabled": true,
         "description": "WDK wallet operations - on-chain USDT transfers",
         "triggers": ["balance", "send usdt", "transfer", "wallet"]
+      },
+      "sentinel_bot_commands": {
+        "enabled": true,
+        "description": "Intelligent bot command handling with context-aware reasoning",
+        "triggers": ["help", "status", "request", "approve", "wallet", "balance", "history", "repay"]
       }
     }
   },

@@ -468,7 +468,14 @@ const makeLendingDecision = async (loanRequest) =>
     did: loanRequest.did,
     amount: loanRequest.amount,
     purpose: loanRequest.purpose,
-    action: 'evaluate_loan_request'
+    creditScore: loanRequest.creditScore,
+    tier: loanRequest.tier,
+    action: 'evaluate_loan_request',
+    context: {
+      creditScore: loanRequest.creditScore,
+      tier: loanRequest.tier,
+      amount: loanRequest.amount
+    }
   });
 
 /**
@@ -484,6 +491,21 @@ const initiateRecovery = async (loan) =>
     dueDate: loan.dueDate,
     status: loan.status,
     action: 'initiate_recovery'
+  });
+
+/**
+ * Process bot commands intelligently with context awareness.
+ * @param {Object} commandData - Command details
+ * @returns {Promise<Object>}
+ */
+const processIntelligentCommand = async (commandData) =>
+  invokeSkill('sentinel_bot_commands', {
+    command: commandData.command,
+    user: commandData.user,
+    message: commandData.message,
+    context: commandData.context,
+    channel: commandData.channel,
+    action: 'process_command'
   });
 
 // ============================================
@@ -502,6 +524,7 @@ module.exports = {
   assessCredit,
   makeLendingDecision,
   initiateRecovery,
+  processIntelligentCommand,
 
   // Utilities
   parseFrontmatter,
