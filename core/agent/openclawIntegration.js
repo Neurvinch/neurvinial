@@ -126,20 +126,98 @@ const loadAllSkills = () => {
 // Pure Functions - LLM Reasoning
 // ============================================
 
+// Credit tier limits for loan decisions
+const TIER_LIMITS = {
+  'A': 5000,
+  'B': 2000,
+  'C': 500,
+  'D': 0
+};
+
+/**
+ * Pre-compute lending decision to help LLM.
+ * @param {Object} context - Execution context
+ * @returns {Object} Enhanced context with decision hints
+ */
+const enhanceLendingContext = (context) => {
+  const ctx = context.context || context;
+  const { tier, creditScore, amount } = ctx;
+
+  if (!tier && !creditScore && !amount) {
+    return context;
+  }
+
+  // Derive tier from creditScore if not provided
+  let derivedTier = tier;
+  if (!derivedTier && creditScore !== undefined) {
+    if (creditScore >= 80) derivedTier = 'A';
+    else if (creditScore >= 60) derivedTier = 'B';
+    else if (creditScore >= 40) derivedTier = 'C';
+    else derivedTier = 'D';
+  }
+
+  if (!derivedTier) derivedTier = 'C'; // Default
+
+  const limit = TIER_LIMITS[derivedTier] || 500;
+  const amountNum = parseInt(amount) || 0;
+
+  // Pre-compute the comparison
+  const exceedsLimit = amountNum > limit;
+  const isTierD = derivedTier === 'D';
+
+  return {
+    ...context,
+    _lendingHint: {
+      tier: derivedTier,
+      limit: limit,
+      amount: amountNum,
+      exceedsLimit: exceedsLimit,
+      isTierD: isTierD,
+      shouldDeny: isTierD || exceedsLimit,
+      recommendation: isTierD ? 'DENY (Tier D always denied)' :
+                      exceedsLimit ? `DENY (${amountNum} > ${limit})` :
+                      `APPROVE (${amountNum} <= ${limit})`
+    }
+  };
+};
+
 /**
  * Generate LLM prompt for skill execution.
  * @param {Object} skill - Skill definition
  * @param {Object} context - Execution context
  * @returns {string} Formatted prompt
  */
-const buildSkillPrompt = (skill, context) => `
+const buildSkillPrompt = (skill, context) => {
+  // Add lending hints for lending skill
+  let enhancedContext = context;
+  if (skill.name === 'sentinel_lending') {
+    enhancedContext = enhanceLendingContext(context);
+  }
+
+  let lendingHint = '';
+  if (enhancedContext._lendingHint) {
+    const h = enhancedContext._lendingHint;
+    lendingHint = `
+## PRE-COMPUTED DECISION (USE THIS!)
+- Tier: ${h.tier}
+- Limit: $${h.limit}
+- Amount: $${h.amount}
+- Exceeds Limit: ${h.exceedsLimit ? 'YES' : 'NO'}
+- Is Tier D: ${h.isTierD ? 'YES' : 'NO'}
+- **RECOMMENDATION: ${h.recommendation}**
+
+IMPORTANT: Follow the recommendation above! If it says DENY, use action="deny_loan". If it says APPROVE, use action="approve_loan".
+`;
+  }
+
+  return `
 You are an AI agent executing the "${skill.name}" skill.
 
 ## Skill Instructions
 ${skill.instructions}
-
+${lendingHint}
 ## Context
-${JSON.stringify(context, null, 2)}
+${JSON.stringify(enhancedContext, null, 2)}
 
 ## Task
 Based on the skill instructions and context, provide a JSON response with:
@@ -150,6 +228,7 @@ Based on the skill instructions and context, provide a JSON response with:
 
 Respond with valid JSON only.
 `;
+};
 
 /**
  * Execute LLM reasoning for a skill.
@@ -158,6 +237,58 @@ Respond with valid JSON only.
  * @returns {Promise<Object>} LLM response
  */
 const executeLLMReasoning = async (skill, context) => {
+  // SPECIAL HANDLING: For lending decisions with complete info, use deterministic logic
+  if (skill.name === 'sentinel_lending') {
+    const ctx = context.context || context;
+    const { tier, creditScore, amount } = ctx;
+
+    if ((tier || creditScore !== undefined) && amount !== undefined) {
+      // Derive tier from creditScore if not provided
+      let derivedTier = tier;
+      if (!derivedTier && creditScore !== undefined) {
+        if (creditScore >= 80) derivedTier = 'A';
+        else if (creditScore >= 60) derivedTier = 'B';
+        else if (creditScore >= 40) derivedTier = 'C';
+        else derivedTier = 'D';
+      }
+      if (!derivedTier) derivedTier = 'C';
+
+      const limit = TIER_LIMITS[derivedTier] || 500;
+      const amountNum = parseInt(amount) || 0;
+      const isTierD = derivedTier === 'D';
+      const exceedsLimit = amountNum > limit;
+
+      // Deterministic decision - no LLM needed!
+      if (isTierD) {
+        return {
+          action: 'deny_loan',
+          reasoning: `Tier D (score ${creditScore || 'N/A'}) - not eligible for loans. DENIED.`,
+          confidence: 100,
+          data: { tier: derivedTier, maxAllowed: 0, requested: amountNum },
+          source: 'deterministic'
+        };
+      }
+
+      if (exceedsLimit) {
+        return {
+          action: 'deny_loan',
+          reasoning: `Tier ${derivedTier} credit. Amount $${amountNum} exceeds limit $${limit}. DENIED.`,
+          confidence: 100,
+          data: { tier: derivedTier, limit: limit, requested: amountNum },
+          source: 'deterministic'
+        };
+      }
+
+      return {
+        action: 'approve_loan',
+        reasoning: `Tier ${derivedTier} credit (score ${creditScore || 'N/A'}). Amount $${amountNum} within limit $${limit}. APPROVED.`,
+        confidence: 100,
+        data: { approvedAmount: amountNum, tier: derivedTier, interestRate: derivedTier === 'A' ? 0.035 : derivedTier === 'B' ? 0.05 : 0.08 },
+        source: 'deterministic'
+      };
+    }
+  }
+
   if (!groq) {
     // Fallback when Groq not configured
     return {
