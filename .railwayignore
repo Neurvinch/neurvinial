@@ -1,0 +1,17 @@
+.git
+.github
+node_modules
+.env
+.env.local
+.DS_Store
+*.log
+.vscode
+.idea
+test-*.js
+QUICK_START.sh
+restart.bat
+start-with-openclaw.sh
+test-lending-skill.bat
+test-phases-1-2.sh
+tests/
+nul
