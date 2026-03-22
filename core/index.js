@@ -135,10 +135,13 @@ async function start() {
     await initializeOpenClaw();
 
     // Initialize communication channels
-    // NOTE: Telegram disabled - focusing on WhatsApp only
-    // telegramChannel.initializeTelegram();
+    // Enable both Telegram and WhatsApp for testing
+    if (config.telegram?.botToken) {
+      telegramChannel.initializeTelegram();
+      logger.info('Telegram channel active');
+    }
     whatsappChannel.initializeWhatsApp();
-    logger.info('WhatsApp channel active (Telegram disabled)');
+    logger.info('WhatsApp channel active');
 
     // Start repayment monitor (checks every minute)
     repaymentMonitor.start('* * * * *');

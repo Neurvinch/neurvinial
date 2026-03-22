@@ -564,7 +564,18 @@ const initializeTelegram = () => {
       // Development: use polling
       bot.on('message', handleMessage);
       bot.on('error', (error) => {
+        // Ignore 409 Conflict errors (normal during deployments)
+        if (error.code === 'ETELEGRAM' && error.message?.includes('409 Conflict')) {
+          return; // Silently ignore - old instance terminated, this is expected
+        }
         logger.error('Telegram bot error', { error: error.message });
+      });
+      bot.on('polling_error', (error) => {
+        // Ignore 409 Conflict errors during polling (normal during deployments)
+        if (error.code === 'ETELEGRAM' && error.message?.includes('409 Conflict')) {
+          return; // Silently ignore
+        }
+        logger.error('Telegram polling error', { error: error.message });
       });
     }
     // In production (webhook mode), messages are handled via Express route
