@@ -18,6 +18,10 @@ const agentSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  walletIndex: {
+    type: Number,
+    default: null
+  },
   publicKey: {
     type: String
   },

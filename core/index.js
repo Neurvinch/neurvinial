@@ -64,8 +64,9 @@ app.get('/health', async (req, res) => {
     uptime: process.uptime(),
     components: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      wdk: walletManager.isInitialized() ? 'initialized' : 'not_initialized',
       openclaw: 'initialized',
-      telegram: !!process.env.TELEGRAM_BOT_TOKEN ? 'active' : 'disabled',
+      telegram: 'disabled',
       whatsapp: !!process.env.TWILIO_ACCOUNT_SID ? 'active' : 'disabled'
     }
   });
@@ -131,9 +132,11 @@ async function start() {
     // Initialize OpenClaw agent runtime
     await initializeOpenClaw();
 
-    // Initialize communication channels (Telegram, WhatsApp)
-    telegramChannel.initializeTelegram();
+    // Initialize communication channels
+    // NOTE: Telegram disabled - focusing on WhatsApp only
+    // telegramChannel.initializeTelegram();
     whatsappChannel.initializeWhatsApp();
+    logger.info('WhatsApp channel active (Telegram disabled)');
 
     // Start repayment monitor (checks every minute)
     repaymentMonitor.start('* * * * *');

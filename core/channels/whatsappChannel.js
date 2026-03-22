@@ -10,6 +10,7 @@ const config = require('../config');
 const { invokeSkill } = require('../agent/openclawIntegration');
 const { Agent, Loan } = require('../models');
 const mongoose = require('mongoose');
+const walletManager = require('../wdk/walletManager');
 
 // WhatsApp user context tracking
 const whatsappContexts = new Map();
@@ -127,25 +128,56 @@ const handleWhatsAppRegister = async (phoneNumber) => {
     const did = `did:whatsapp:${phoneNumber}`;
     context.did = did;
 
+    let walletAddress = null;
+    let walletIndex = null;
+
+    // Try to create a REAL wallet using WDK
+    try {
+      if (walletManager.isInitialized()) {
+        // Use phone number hash as wallet index for determinism
+        const phoneHash = phoneNumber.replace(/\D/g, '');
+        walletIndex = parseInt(phoneHash.slice(-6)) || Math.floor(Math.random() * 100000);
+        const wallet = await walletManager.createWalletForAgent(walletIndex);
+        walletAddress = wallet.address;
+        logger.info('Real wallet created for user', { did, walletAddress, walletIndex });
+      }
+    } catch (walletError) {
+      logger.warn('Could not create real wallet, using placeholder', { error: walletError.message });
+    }
+
+    // Fallback to placeholder if WDK not available
+    if (!walletAddress) {
+      walletAddress = `0x${phoneNumber.replace(/\D/g, '').padStart(40, '0')}`;
+    }
+
     if (mongoose.connection.readyState === 1) {
       const agent = new Agent({
         did,
-        walletAddress: `0x${phoneNumber.replace(/\D/g, '').padStart(40, '0')}`,
+        walletAddress,
+        walletIndex,
         creditScore: 50,
         tier: 'C'
       });
       await agent.save();
     }
 
+    // Update context
+    context.walletAddress = walletAddress;
+    context.creditScore = 50;
+    context.tier = 'C';
+    context.registered = true;
+    whatsappContexts.set(phoneNumber, context);
+
     const message = `✅ *Registration Successful*
 
 Your DID: ${did}
 Credit Score: 50 (Tier C)
+Wallet: ${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}
 
 Send "status" to check score or "request 500" to apply for a loan.`;
 
     await sendWhatsAppMessage(phoneNumber, message);
-    logger.info('WhatsApp user registered', { did, phoneNumber });
+    logger.info('WhatsApp user registered', { did, phoneNumber, walletAddress });
   } catch (error) {
     await sendWhatsAppMessage(phoneNumber, `❌ Registration failed: ${error.message}`);
     logger.error('WhatsApp registration failed', { error: error.message });
@@ -222,32 +254,109 @@ const handleWhatsAppRequest = async (phoneNumber, amount) => {
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + 30);
 
+        // Get user's wallet address from Agent record
+        let recipientAddress = context.walletAddress;
+        if (!recipientAddress) {
+          const agent = await Agent.findOne({ did: context.did });
+          recipientAddress = agent?.walletAddress;
+        }
+
+        // Attempt REAL USDT transfer
+        let txHash = null;
+        let transferSuccess = false;
+        let transferError = null;
+
+        if (recipientAddress && walletManager.isInitialized()) {
+          try {
+            logger.info('Initiating REAL USDT transfer', {
+              to: recipientAddress,
+              amount: parsedAmount,
+              did: context.did
+            });
+
+            const transferResult = await walletManager.sendUSDT(recipientAddress, parsedAmount);
+            txHash = transferResult.hash;
+            transferSuccess = true;
+
+            logger.info('USDT transfer SUCCESS', {
+              txHash,
+              amount: parsedAmount,
+              to: recipientAddress
+            });
+          } catch (txError) {
+            transferError = txError.message;
+            logger.warn('USDT transfer failed', {
+              error: txError.message,
+              to: recipientAddress,
+              amount: parsedAmount
+            });
+          }
+        }
+
+        // Generate unique loan ID
+        const loanId = `LOAN-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
         const loan = new Loan({
-          did: context.did,
+          loanId,
+          borrowerDid: context.did,
           amount: parsedAmount,
-          interestRate,
+          currency: 'USDT',
+          apr: interestRate,
           dueDate,
-          createdAt: new Date(),
-          status: 'active',
-          repaid: false,
-          tier: context.tier
+          status: transferSuccess ? 'disbursed' : 'approved',
+          tier: context.tier,
+          disbursementTxHash: txHash,
+          disbursedAt: transferSuccess ? new Date() : null,
+          decisionReasoning: result.result.reasoning || 'Approved based on credit tier'
         });
 
         await loan.save();
-        logger.info('Loan saved to database', { did: context.did, amount: parsedAmount, loanId: loan._id });
+        logger.info('Loan saved to database', {
+          did: context.did,
+          amount: parsedAmount,
+          loanId: loan._id,
+          txHash,
+          transferSuccess
+        });
 
-        const message = `✅ *Loan Approved!*
+        // Build confirmation message
+        let message;
+        if (transferSuccess && txHash) {
+          message = `✅ *Loan Approved & Disbursed!*
 
-Amount: $${parsedAmount} USDT
-Interest Rate: ${(interestRate * 100).toFixed(1)}% per year
-Duration: 30 days
-Due Date: ${dueDate.toLocaleDateString()}
+💰 Amount: $${parsedAmount} USDT
+📊 Interest Rate: ${(interestRate * 100).toFixed(1)}% per year
+⏰ Duration: 30 days
+📅 Due Date: ${dueDate.toLocaleDateString()}
+
+🔗 *Transaction Confirmed*
+TX Hash: ${txHash.substring(0, 16)}...
+Network: Ethereum Sepolia
+Status: ✅ Sent to your wallet
 
 📊 Loan ID: ${loan._id.toString().substring(0, 8)}...
-Status: ⏳ Active
 
-💡 Next: Send "history" to see this loan
-Network: Ethereum Sepolia (Ready for disbursement)`;
+💡 View on Etherscan:
+https://sepolia.etherscan.io/tx/${txHash}`;
+        } else {
+          // Approved but transfer failed or not initialized
+          const reason = transferError || 'WDK not initialized';
+          message = `✅ *Loan Approved!*
+
+💰 Amount: $${parsedAmount} USDT
+📊 Interest Rate: ${(interestRate * 100).toFixed(1)}% per year
+⏰ Duration: 30 days
+📅 Due Date: ${dueDate.toLocaleDateString()}
+
+⚠️ *Disbursement Pending*
+Reason: ${reason}
+Your wallet: ${recipientAddress ? recipientAddress.substring(0, 10) + '...' : 'Not set'}
+
+📊 Loan ID: ${loan._id.toString().substring(0, 8)}...
+Status: ⏳ Awaiting disbursement
+
+💡 Treasury needs ETH for gas. Contact admin.`;
+        }
 
         await sendWhatsAppMessage(phoneNumber, message);
       } catch (saveError) {
@@ -393,7 +502,7 @@ const handleWhatsAppHistory = async (phoneNumber) => {
 
   try {
     if (mongoose.connection.readyState === 1) {
-      const loans = await Loan.find({ did: context.did }).sort({ createdAt: -1 }).limit(10);
+      const loans = await Loan.find({ borrowerDid: context.did }).sort({ createdAt: -1 }).limit(10);
 
       if (loans.length === 0) {
         await sendWhatsAppMessage(phoneNumber, '📭 *Loan History*\n\nNo loans yet. Send "request 300" to apply!');
@@ -402,14 +511,26 @@ const handleWhatsAppHistory = async (phoneNumber) => {
 
       let history = '📚 *Your Loan History* (' + loans.length + ' loans)\n\n';
       loans.forEach((loan, index) => {
-        const status = loan.repaid ? '✅ Repaid' : '⏳ Active';
-        const dueDate = new Date(loan.dueDate).toLocaleDateString();
+        const statusMap = {
+          'pending': '⏳ Pending',
+          'approved': '✅ Approved',
+          'disbursed': '💸 Disbursed',
+          'repaid': '✅ Repaid',
+          'defaulted': '❌ Defaulted',
+          'denied': '🚫 Denied'
+        };
+        const status = statusMap[loan.status] || loan.status;
+        const dueDate = loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A';
         const createdDate = new Date(loan.createdAt).toLocaleDateString();
+        const rate = loan.apr ? (loan.apr * 100).toFixed(1) : '8.0';
         history += `${index + 1}. $${loan.amount} USDT (${status})\n`;
         history += `   Created: ${createdDate}\n`;
         history += `   Due: ${dueDate}\n`;
-        history += `   Rate: ${(loan.interestRate * 100).toFixed(1)}%\n`;
-        history += `   ID: ${loan._id.toString().substring(0, 8)}...\n\n`;
+        history += `   Rate: ${rate}%\n`;
+        if (loan.disbursementTxHash) {
+          history += `   TX: ${loan.disbursementTxHash.substring(0, 12)}...\n`;
+        }
+        history += `   ID: ${loan.loanId || loan._id.toString().substring(0, 8)}...\n\n`;
       });
 
       history += '💡 Send "status" to check your score or "request 300" to apply for another loan';
@@ -421,6 +542,108 @@ const handleWhatsAppHistory = async (phoneNumber) => {
   } catch (error) {
     await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
     logger.error('WhatsApp history failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp repay command - Mark loan as repaid
+ */
+const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first.');
+    return;
+  }
+
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Database not available.');
+      return;
+    }
+
+    // Find active loans for this user
+    const activeLoans = await Loan.find({
+      borrowerDid: context.did,
+      status: { $in: ['approved', 'disbursed'] }
+    }).sort({ createdAt: 1 });
+
+    if (activeLoans.length === 0) {
+      await sendWhatsAppMessage(phoneNumber, '✅ *No Active Loans*\n\nYou have no loans to repay. Send "request 100" to get a loan.');
+      return;
+    }
+
+    // If no loan ID provided, show list of loans to repay
+    if (!loanIdPart) {
+      let msg = '💳 *Select Loan to Repay*\n\n';
+      activeLoans.forEach((loan, index) => {
+        const shortId = loan.loanId ? loan.loanId.substring(0, 12) : loan._id.toString().substring(0, 8);
+        msg += `${index + 1}. $${loan.amount} USDT (${shortId})\n`;
+      });
+      msg += '\nTo repay, send: *repay [loan-id]*\n';
+      msg += `Example: repay ${activeLoans[0].loanId ? activeLoans[0].loanId.substring(0, 8) : activeLoans[0]._id.toString().substring(0, 8)}`;
+
+      await sendWhatsAppMessage(phoneNumber, msg);
+      return;
+    }
+
+    // Find the specific loan
+    const loan = activeLoans.find(l =>
+      (l.loanId && l.loanId.includes(loanIdPart)) ||
+      l._id.toString().includes(loanIdPart)
+    );
+
+    if (!loan) {
+      await sendWhatsAppMessage(phoneNumber, `❌ Loan "${loanIdPart}" not found. Send "repay" to see your active loans.`);
+      return;
+    }
+
+    // Mark as repaid
+    loan.status = 'repaid';
+    loan.repaidAt = new Date();
+    await loan.save();
+
+    // Update user's credit score (improve for good repayment)
+    const agent = await Agent.findOne({ did: context.did });
+    if (agent) {
+      agent.totalRepaid = (agent.totalRepaid || 0) + 1;
+      // Improve credit score slightly (max 100)
+      agent.creditScore = Math.min(100, (agent.creditScore || 50) + 5);
+      // Potentially upgrade tier
+      if (agent.creditScore >= 80) agent.tier = 'A';
+      else if (agent.creditScore >= 60) agent.tier = 'B';
+      else if (agent.creditScore >= 40) agent.tier = 'C';
+      else agent.tier = 'D';
+
+      await agent.save();
+
+      // Update context
+      context.creditScore = agent.creditScore;
+      context.tier = agent.tier;
+      whatsappContexts.set(phoneNumber, context);
+    }
+
+    const message = `✅ *Loan Repaid!*
+
+💰 Amount: $${loan.amount} USDT
+📅 Repaid: ${new Date().toLocaleDateString()}
+📊 Loan ID: ${loan.loanId || loan._id.toString().substring(0, 12)}
+
+🎉 *Credit Score Improved!*
+New Score: ${agent?.creditScore || 'N/A'}
+New Tier: ${agent?.tier || 'N/A'}
+
+Keep repaying on time to improve your credit!`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+    logger.info('Loan repaid', {
+      did: context.did,
+      loanId: loan.loanId || loan._id,
+      amount: loan.amount
+    });
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp repay failed', { error: error.message });
   }
 };
 
@@ -440,13 +663,15 @@ const handleWhatsAppHelp = async (phoneNumber) => {
 • *terms* - View loan interest rates
 • *approve* - Check if eligible
 • *history* - View past loans
-• *balance* - Treasury balance
+• *balance* - Your loan portfolio
+• *repay* - Mark loan as repaid
 • *help* - Show this menu
 
 📱 *Example Flows:*
 → register
 → status
 → request 500
+→ repay [loan-id]
 
 💰 Token: USDT on Ethereum Sepolia`;
 
@@ -475,17 +700,35 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
     await handleWhatsAppApprove(phoneNumber);
   } else if (command === 'history' || command === 'loans' || command === 'past') {
     await handleWhatsAppHistory(phoneNumber);
+  } else if (command.startsWith('repay')) {
+    const loanId = command.split(' ')[1];
+    await handleWhatsAppRepay(phoneNumber, loanId);
   } else if (command === 'balance') {
     try {
+      // Get user context first
+      const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+      if (!context.did) {
+        await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to see your balance.');
+        return;
+      }
+
       if (mongoose.connection.readyState === 1) {
         // Show user's loan portfolio (not treasury)
-        const loans = await Loan.find({ did: context.did });
+        const loans = await Loan.find({ borrowerDid: context.did });
 
-        const activeLoans = loans.filter(l => !l.repaid);
-        const repaidLoans = loans.filter(l => l.repaid);
+        const activeLoans = loans.filter(l => ['approved', 'disbursed'].includes(l.status));
+        const repaidLoans = loans.filter(l => l.status === 'repaid');
         const totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
         const totalRepaid = repaidLoans.reduce((sum, l) => sum + l.amount, 0);
         const activeLoanTotal = activeLoans.reduce((sum, l) => sum + l.amount, 0);
+
+        // Get wallet address
+        const agent = await Agent.findOne({ did: context.did });
+        const walletAddress = agent?.walletAddress || 'Not set';
+        const shortWallet = walletAddress.length > 20
+          ? `${walletAddress.substring(0, 10)}...${walletAddress.substring(38)}`
+          : walletAddress;
 
         const message = `💰 *Your Loan Portfolio*
 
@@ -497,11 +740,13 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
 🔄 Active: ${activeLoans.length} loans
 ✓ Completed: ${repaidLoans.length} loans
 
+🔐 Your Wallet: ${shortWallet}
+
 Send "history" to see all loans`;
 
         await sendWhatsAppMessage(phoneNumber, message);
       } else {
-        const walletManager = require('../wdk/walletManager');
+        // Fallback to treasury info if DB not connected
         const ethBal = await walletManager.getSentinelETHBalance();
         const usdtBal = await walletManager.getSentinelUSDTBalance();
 
@@ -581,6 +826,7 @@ module.exports = {
   handleWhatsAppTerms,
   handleWhatsAppApprove,
   handleWhatsAppHistory,
+  handleWhatsAppRepay,
   handleWhatsAppHelp,
   sendWhatsAppMessage,
   parseWhatsAppWebhook,
