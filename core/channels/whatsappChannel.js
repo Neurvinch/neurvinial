@@ -16,17 +16,49 @@ const whatsappContexts = new Map();
 
 /**
  * Get or create WhatsApp user context.
+ * First checks MongoDB for persistent storage, then memory cache
  */
 const getOrCreateWhatsAppContext = async (phoneNumber) => {
-  if (!whatsappContexts.has(phoneNumber)) {
-    whatsappContexts.set(phoneNumber, {
-      phoneNumber,
-      did: null,
-      creditScore: null,
-      registeredAt: Date.now()
-    });
+  // Check memory cache first
+  if (whatsappContexts.has(phoneNumber)) {
+    return whatsappContexts.get(phoneNumber);
   }
-  return whatsappContexts.get(phoneNumber);
+
+  // Try to load from MongoDB
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const did = `did:whatsapp:${phoneNumber}`;
+      const agent = await Agent.findOne({ did });
+
+      if (agent) {
+        // User exists in MongoDB - load their context
+        const context = {
+          phoneNumber,
+          did: agent.did,
+          creditScore: agent.creditScore,
+          tier: agent.tier,
+          registered: true,
+          registeredAt: agent.createdAt
+        };
+        whatsappContexts.set(phoneNumber, context);
+        return context;
+      }
+    }
+  } catch (error) {
+    logger.error('Failed to load user from MongoDB', { error: error.message });
+  }
+
+  // New user - create context
+  const newContext = {
+    phoneNumber,
+    did: null,
+    creditScore: null,
+    tier: null,
+    registered: false,
+    registeredAt: Date.now()
+  };
+  whatsappContexts.set(phoneNumber, newContext);
+  return newContext;
 };
 
 /**
@@ -192,26 +224,173 @@ const handleWhatsAppRequest = async (phoneNumber, amount) => {
 };
 
 /**
+ * Handle WhatsApp limit/howmuch command - Show max loan amount
+ */
+const handleWhatsAppLimit = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to see your loan limit.');
+    return;
+  }
+
+  try {
+    const tierLimits = {
+      'A': 5000,
+      'B': 2000,
+      'C': 500,
+      'D': 0
+    };
+
+    const maxLoan = tierLimits[context.tier] || 0;
+    const message = `💰 *Your Loan Limit*
+
+Tier: ${context.tier}
+Credit Score: ${context.creditScore}
+Maximum Loan: $${maxLoan} USDT
+
+To request a loan, send: *request 300*
+(Replace 300 with your desired amount)`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+  }
+};
+
+/**
+ * Handle WhatsApp terms command - Show loan terms
+ */
+const handleWhatsAppTerms = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to see loan terms.');
+    return;
+  }
+
+  try {
+    const interestRates = {
+      'A': 3.5,
+      'B': 5.0,
+      'C': 8.0,
+      'D': 'N/A'
+    };
+
+    const rate = interestRates[context.tier] || 'N/A';
+    const duration = 30;
+
+    const message = `📋 *Your Loan Terms*
+
+Tier: ${context.tier} (Score: ${context.creditScore})
+Interest Rate: ${rate}% per annum
+Loan Duration: ${duration} days
+Repayment: Monthly installments
+Network: Ethereum Sepolia
+Token: USDT
+
+Send *request 300* to apply for a loan!`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+  }
+};
+
+/**
+ * Handle WhatsApp approve command - Check if eligible
+ */
+const handleWhatsAppApprove = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to check eligibility.');
+    return;
+  }
+
+  try {
+    const result = await invokeSkill('sentinel_credit', {
+      did: context.did,
+      action: 'assess_creditworthiness'
+    });
+
+    const approved = context.tier !== 'D';
+    const message = approved
+      ? `✅ *You Are Eligible!*\n\nTier: ${context.tier}\nCredit Score: ${context.creditScore}\n\nYou can borrow up to your tier limit.\nSend "request 300" to apply!`
+      : `❌ *Not Eligible*\n\nTier D users are not eligible for loans at this time.\nImprove your credit score to become eligible.`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+  }
+};
+
+/**
+ * Handle WhatsApp history command - Show loan history
+ */
+const handleWhatsAppHistory = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first to view history.');
+    return;
+  }
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const loans = await Loan.find({ did: context.did }).sort({ createdAt: -1 }).limit(5);
+
+      if (loans.length === 0) {
+        await sendWhatsAppMessage(phoneNumber, '📭 *Loan History*\n\nNo loans yet. Send "request 300" to apply!');
+        return;
+      }
+
+      let history = '📚 *Your Loan History*\n\n';
+      loans.forEach((loan, index) => {
+        const status = loan.repaid ? '✅ Repaid' : '⏳ Active';
+        history += `${index + 1}. $${loan.amount} USDT (${status})\n`;
+        history += `   Date: ${new Date(loan.createdAt).toLocaleDateString()}\n`;
+        history += `   Rate: ${loan.interestRate * 100}%\n\n`;
+      });
+
+      await sendWhatsAppMessage(phoneNumber, history);
+    } else {
+      await sendWhatsAppMessage(phoneNumber, '📭 No loans yet.');
+    }
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+  }
+};
+
+/**
  * Handle WhatsApp help command.
  */
 const handleWhatsAppHelp = async (phoneNumber) => {
   const helpMessage = `ℹ️ *SENTINEL WhatsApp Bot*
 
-Available Commands:
-• register - Create an account
-• status - Check your credit score
-• request 500 - Request a loan (change amount)
-• balance - Check treasury balance
-• help - Show this message
+🎯 *Quick Start:*
+1. Send: *register* - Create account
+2. Send: *status* - Check credit score
+3. Send: *request 300* - Apply for loan
 
-Example:
-request 500
+💡 *More Commands:*
+• *limit* - See max borrowing amount
+• *terms* - View loan interest rates
+• *approve* - Check if eligible
+• *history* - View past loans
+• *balance* - Treasury balance
+• *help* - Show this menu
 
-Network: Ethereum Sepolia
-Token: USDT`;
+📱 *Example Flows:*
+→ register
+→ status
+→ request 500
+
+💰 Token: USDT on Ethereum Sepolia`;
 
   await sendWhatsAppMessage(phoneNumber, helpMessage);
 };
+
 
 /**
  * Handle WhatsApp message.
@@ -226,6 +405,14 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
   } else if (command.startsWith('request')) {
     const amount = command.split(' ')[1];
     await handleWhatsAppRequest(phoneNumber, amount);
+  } else if (command === 'limit' || command === 'howmuch' || command === 'max') {
+    await handleWhatsAppLimit(phoneNumber);
+  } else if (command === 'terms' || command === 'rates' || command === 'interest') {
+    await handleWhatsAppTerms(phoneNumber);
+  } else if (command === 'approve' || command === 'eligible' || command === 'check') {
+    await handleWhatsAppApprove(phoneNumber);
+  } else if (command === 'history' || command === 'loans' || command === 'past') {
+    await handleWhatsAppHistory(phoneNumber);
   } else if (command === 'balance') {
     try {
       const walletManager = require('../wdk/walletManager');
@@ -237,11 +424,20 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
     } catch (error) {
       await sendWhatsAppMessage(phoneNumber, `❌ Balance check failed: ${error.message}`);
     }
-  } else if (command === 'help') {
+  } else if (command === 'help' || command === '?') {
     await handleWhatsAppHelp(phoneNumber);
   } else {
-    // Auto-help for unknown commands
-    const greeting = `👋 Welcome to SENTINEL!\n\nType "help" to see available commands or "register" to get started.`;
+    // Auto-help for unknown commands - show quick menu
+    const greeting = `👋 Welcome to SENTINEL Lending!
+
+Type a command:
+• *register* - Create account
+• *status* - Check score
+• *request 300* - Get a loan
+• *limit* - See max amount
+• *help* - All commands
+
+Quick: Send "register" to start!`;
     await sendWhatsAppMessage(phoneNumber, greeting);
   }
 };
@@ -294,6 +490,10 @@ module.exports = {
   handleWhatsAppRegister,
   handleWhatsAppStatus,
   handleWhatsAppRequest,
+  handleWhatsAppLimit,
+  handleWhatsAppTerms,
+  handleWhatsAppApprove,
+  handleWhatsAppHistory,
   handleWhatsAppHelp,
   sendWhatsAppMessage,
   parseWhatsAppWebhook,
