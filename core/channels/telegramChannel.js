@@ -13,7 +13,11 @@ const mongoose = require('mongoose');
 
 // Initialize Telegram Bot
 const telegramBotToken = config.telegram?.botToken;
-const bot = telegramBotToken ? new TelegramBot(telegramBotToken, { polling: true }) : null;
+// Use webhooks in production, polling in development
+const useWebhook = process.env.NODE_ENV === 'production';
+const bot = telegramBotToken
+  ? new TelegramBot(telegramBotToken, { polling: !useWebhook })
+  : null;
 
 // User context tracking
 const userContexts = new Map();
@@ -568,16 +572,64 @@ const initializeTelegram = () => {
   }
 
   try {
-    bot.on('message', handleMessage);
-    bot.on('error', (error) => {
-      logger.error('Telegram bot error', { error: error.message });
-    });
+    const mode = useWebhook ? 'webhook' : 'polling';
 
-    logger.info('Telegram bot initialized with polling');
+    if (!useWebhook) {
+      // Development: use polling
+      bot.on('message', handleMessage);
+      bot.on('error', (error) => {
+        logger.error('Telegram bot error', { error: error.message });
+      });
+    }
+    // In production (webhook mode), messages are handled via Express route
+
+    logger.info(`Telegram bot initialized with ${mode}`);
     return true;
   } catch (error) {
     logger.error('Failed to initialize Telegram bot', { error: error.message });
     return false;
+  }
+};
+
+/**
+ * Handle Telegram webhook (for Express route).
+ */
+const handleTelegramWebhook = async (req, res) => {
+  try {
+    const update = req.body;
+
+    if (update.message) {
+      // Process message asynchronously
+      setImmediate(() => {
+        handleMessage(update.message).catch((error) => {
+          logger.error('Error handling Telegram webhook', { error: error.message });
+        });
+      });
+    }
+
+    // Return 200 OK immediately
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    logger.error('Telegram webhook error', { error: error.message });
+    res.status(500).json({ ok: false, error: error.message });
+  }
+};
+
+/**
+ * Set Telegram webhook URL.
+ */
+const setTelegramWebhook = async (webhookUrl) => {
+  if (!bot) {
+    throw new Error('Telegram bot not initialized');
+  }
+
+  try {
+    await bot.setWebHook(webhookUrl);
+    logger.info('Telegram webhook set', { url: webhookUrl });
+    return true;
+  } catch (error) {
+    logger.error('Failed to set Telegram webhook', { error: error.message });
+    throw error;
   }
 };
 
@@ -595,6 +647,7 @@ const stopTelegram = () => {
 module.exports = {
   initializeTelegram,
   stopTelegram,
+  setTelegramWebhook,
   bot,
   getOrCreateContext,
   handleStart,

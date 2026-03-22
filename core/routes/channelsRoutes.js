@@ -46,8 +46,7 @@ router.get('/status', (req, res) => {
  */
 router.post('/telegram/webhook', async (req, res) => {
   try {
-    await telegramChannel.handleTelegramWebhook(req.body);
-    res.json({ ok: true });
+    await telegramChannel.handleTelegramWebhook(req, res);
   } catch (error) {
     logger.error('Telegram webhook error', { error: error.message });
     res.status(500).json({ ok: false, error: error.message });
