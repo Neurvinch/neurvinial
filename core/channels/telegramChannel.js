@@ -451,13 +451,6 @@ const handleHistory = async (msg) => {
     logger.error('Telegram history failed', { error: error.message });
   }
 };
-    } else {
-      bot.sendMessage(chatId, '📭 No loans yet.', { parse_mode: 'Markdown' });
-    }
-  } catch (error) {
-    bot.sendMessage(chatId, `❌ Error: ${error.message}`);
-  }
-};
 
 /**
  * Handle /help command.
