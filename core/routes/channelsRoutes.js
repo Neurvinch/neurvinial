@@ -64,16 +64,9 @@ router.post('/telegram/webhook', async (req, res) => {
  */
 router.post('/whatsapp/webhook', async (req, res) => {
   try {
-    // Debug logging
-    logger.debug('WhatsApp webhook received', {
-      body: req.body,
-      headers: req.headers,
-      contentType: req.get('Content-Type')
-    });
-
     await whatsappChannel.handleWhatsAppWebhook(req, res);
   } catch (error) {
-    logger.error('WhatsApp webhook error', { error: error.message, stack: error.stack });
+    logger.error('WhatsApp webhook error', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 });
@@ -167,18 +160,5 @@ router.post('/test/whatsapp', async (req, res) => {
   }
 });
 
-/**
- * POST /channels/debug/webhook
- * Debug endpoint to inspect webhook body
- */
-router.post('/debug/webhook', (req, res) => {
-  res.json({
-    debug: 'Webhook Debug',
-    bodyReceived: req.body,
-    contentType: req.get('Content-Type'),
-    keys: Object.keys(req.body),
-    rawHeaders: req.rawHeaders.slice(0, 20)
-  });
-});
 
 module.exports = router;
