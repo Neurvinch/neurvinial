@@ -205,18 +205,76 @@ const handleRequest = async (msg, args) => {
     const result = await invokeSkill('sentinel_lending', {
       did: context.did,
       amount,
+      creditScore: context.creditScore,
+      tier: context.tier,
       action: 'evaluate_loan_request'
     });
 
     const approved = result.result.action === 'approve_loan';
-    const responseText = approved
-      ? `✅ *Loan Approved!*\n\nAmount: $${amount} USDT\nConfidence: ${result.result.confidence}%\n\n*Reason:*\n${result.result.reasoning}`
-      : `❌ *Loan Denied*\n\n*Reason:*\n${result.result.reasoning}`;
 
-    bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+    if (approved && mongoose.connection.readyState === 1) {
+      // Save approved loan to MongoDB
+      try {
+        const Loan = require('../models').Loan;
+        const interestRates = { 'A': 0.035, 'B': 0.05, 'C': 0.08, 'D': 0.15 };
+        const interestRate = interestRates[context.tier] || 0.08;
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + 30);
+
+        const loan = new Loan({
+          did: context.did,
+          amount,
+          interestRate,
+          dueDate,
+          createdAt: new Date(),
+          status: 'active',
+          repaid: false,
+          tier: context.tier
+        });
+
+        await loan.save();
+        logger.info('Loan saved to database', { did: context.did, amount, loanId: loan._id });
+
+        const responseText = `✅ *Loan Approved!*
+
+Amount: $${amount} USDT
+Interest Rate: ${(interestRate * 100).toFixed(1)}% per year
+Duration: 30 days
+Due Date: ${dueDate.toLocaleDateString()}
+
+📊 Loan ID: ${loan._id.toString().substring(0, 8)}...
+Status: ⏳ Active
+
+💡 Next: Send /history to see this loan
+🔗 Network: Ethereum Sepolia (Ready for disbursement)`;
+
+        bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+      } catch (saveError) {
+        logger.error('Failed to save loan', { error: saveError.message });
+        // Still show approval even if save failed
+        const responseText = `✅ *Loan Approved!*\n\nAmount: $${amount} USDT\nConfidence: ${result.result.confidence}%\n\n*Reason:*\n${result.result.reasoning}`;
+        bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+      }
+    } else if (approved) {
+      // Database not available
+      const responseText = `✅ *Loan Approved!*\n\nAmount: $${amount} USDT\nConfidence: ${result.result.confidence}%\n\n*Reason:*\n${result.result.reasoning}`;
+      bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+    } else {
+      // Loan denied
+      const responseText = `❌ *Loan Denied*\n\nAmount: $${amount} USDT\n\n*Reason:*\n${result.result.reasoning}\n\n💡 Try a smaller amount or check /limit`;
+      bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+    }
+
     logger.info('Telegram loan request', { did: context.did, amount, approved });
   } catch (error) {
-    bot.sendMessage(chatId, `❌ Request failed: ${error.message}`);
+    let errorMsg = error.message;
+    if (error.message.includes('rate_limit')) {
+      errorMsg = '⏳ API temporarily busy. Please try again in 1 minute.';
+    }
+    bot.sendMessage(chatId, `❌ Request failed: ${errorMsg}`);
+    logger.error('Telegram request failed', { error: error.message });
+  }
+};
     logger.error('Telegram request failed', { error: error.message });
   }
 };
@@ -333,22 +391,36 @@ const handleHistory = async (msg) => {
   try {
     if (mongoose.connection.readyState === 1) {
       const Loan = require('../models').Loan;
-      const loans = await Loan.find({ did: context.did }).sort({ createdAt: -1 }).limit(5);
+      const loans = await Loan.find({ did: context.did }).sort({ createdAt: -1 }).limit(10);
 
       if (loans.length === 0) {
         bot.sendMessage(chatId, '📭 *Loan History*\n\nNo loans yet. Use /request 300 to apply!', { parse_mode: 'Markdown' });
         return;
       }
 
-      let history = '📚 *Your Loan History*\n\n';
+      let history = '📚 *Your Loan History* (' + loans.length + ' loans)\n\n';
       loans.forEach((loan, index) => {
         const status = loan.repaid ? '✅ Repaid' : '⏳ Active';
+        const dueDate = new Date(loan.dueDate).toLocaleDateString();
+        const createdDate = new Date(loan.createdAt).toLocaleDateString();
         history += `${index + 1}. $${loan.amount} USDT (${status})\n`;
-        history += `   Date: ${new Date(loan.createdAt).toLocaleDateString()}\n`;
-        history += `   Rate: ${loan.interestRate * 100}%\n\n`;
+        history += `   Created: ${createdDate}\n`;
+        history += `   Due: ${dueDate}\n`;
+        history += `   Rate: ${(loan.interestRate * 100).toFixed(1)}%\n`;
+        history += `   ID: ${loan._id.toString().substring(0, 8)}...\n\n`;
       });
 
+      history += '💡 Send /status to check your score or /request 300 to apply for another loan';
+
       bot.sendMessage(chatId, history, { parse_mode: 'Markdown' });
+    } else {
+      bot.sendMessage(chatId, '📭 No loans yet.', { parse_mode: 'Markdown' });
+    }
+  } catch (error) {
+    bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+    logger.error('Telegram history failed', { error: error.message });
+  }
+};
     } else {
       bot.sendMessage(chatId, '📭 No loans yet.', { parse_mode: 'Markdown' });
     }

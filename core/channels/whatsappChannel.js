@@ -207,18 +207,73 @@ const handleWhatsAppRequest = async (phoneNumber, amount) => {
     const result = await invokeSkill('sentinel_lending', {
       did: context.did,
       amount: parsedAmount,
+      creditScore: context.creditScore,
+      tier: context.tier,
       action: 'evaluate_loan_request'
     });
 
     const approved = result.result.action === 'approve_loan';
-    const message = approved
-      ? `✅ *Loan Approved!*\n\nAmount: $${parsedAmount} USDT\nConfidence: ${result.result.confidence}%\n\nReason: ${result.result.reasoning}`
-      : `❌ *Loan Denied*\n\nReason: ${result.result.reasoning}`;
 
-    await sendWhatsAppMessage(phoneNumber, message);
+    if (approved && mongoose.connection.readyState === 1) {
+      // Save approved loan to MongoDB
+      try {
+        const interestRates = { 'A': 0.035, 'B': 0.05, 'C': 0.08, 'D': 0.15 };
+        const interestRate = interestRates[context.tier] || 0.08;
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + 30);
+
+        const loan = new Loan({
+          did: context.did,
+          amount: parsedAmount,
+          interestRate,
+          dueDate,
+          createdAt: new Date(),
+          status: 'active',
+          repaid: false,
+          tier: context.tier
+        });
+
+        await loan.save();
+        logger.info('Loan saved to database', { did: context.did, amount: parsedAmount, loanId: loan._id });
+
+        const message = `✅ *Loan Approved!*
+
+Amount: $${parsedAmount} USDT
+Interest Rate: ${(interestRate * 100).toFixed(1)}% per year
+Duration: 30 days
+Due Date: ${dueDate.toLocaleDateString()}
+
+📊 Loan ID: ${loan._id.toString().substring(0, 8)}...
+Status: ⏳ Active
+
+💡 Next: Send "history" to see this loan
+Network: Ethereum Sepolia (Ready for disbursement)`;
+
+        await sendWhatsAppMessage(phoneNumber, message);
+      } catch (saveError) {
+        logger.error('Failed to save loan', { error: saveError.message });
+        // Still show approval even if save failed
+        const message = `✅ *Loan Approved!*\n\nAmount: $${parsedAmount} USDT\nConfidence: ${result.result.confidence}%\n\nReason: ${result.result.reasoning}`;
+        await sendWhatsAppMessage(phoneNumber, message);
+      }
+    } else if (approved) {
+      // Database not available, just show message
+      const message = `✅ *Loan Approved!*\n\nAmount: $${parsedAmount} USDT\nConfidence: ${result.result.confidence}%\n\nReason: ${result.result.reasoning}`;
+      await sendWhatsAppMessage(phoneNumber, message);
+    } else {
+      // Loan denied
+      const message = `❌ *Loan Denied*\n\nAmount: $${parsedAmount} USDT\nReason: ${result.result.reasoning}\n\nTry a smaller amount or check your "limit"`;
+      await sendWhatsAppMessage(phoneNumber, message);
+    }
+
     logger.info('WhatsApp loan request processed', { phoneNumber, amount: parsedAmount, approved });
   } catch (error) {
-    await sendWhatsAppMessage(phoneNumber, `❌ Request failed: ${error.message}`);
+    // Handle Groq rate limiting with retry
+    let errorMsg = error.message;
+    if (error.message.includes('rate_limit')) {
+      errorMsg = '⏳ API temporarily busy. Please try again in 1 minute.';
+    }
+    await sendWhatsAppMessage(phoneNumber, `❌ Request failed: ${errorMsg}`);
     logger.error('WhatsApp request failed', { error: error.message });
   }
 };
@@ -338,20 +393,26 @@ const handleWhatsAppHistory = async (phoneNumber) => {
 
   try {
     if (mongoose.connection.readyState === 1) {
-      const loans = await Loan.find({ did: context.did }).sort({ createdAt: -1 }).limit(5);
+      const loans = await Loan.find({ did: context.did }).sort({ createdAt: -1 }).limit(10);
 
       if (loans.length === 0) {
         await sendWhatsAppMessage(phoneNumber, '📭 *Loan History*\n\nNo loans yet. Send "request 300" to apply!');
         return;
       }
 
-      let history = '📚 *Your Loan History*\n\n';
+      let history = '📚 *Your Loan History* (' + loans.length + ' loans)\n\n';
       loans.forEach((loan, index) => {
         const status = loan.repaid ? '✅ Repaid' : '⏳ Active';
+        const dueDate = new Date(loan.dueDate).toLocaleDateString();
+        const createdDate = new Date(loan.createdAt).toLocaleDateString();
         history += `${index + 1}. $${loan.amount} USDT (${status})\n`;
-        history += `   Date: ${new Date(loan.createdAt).toLocaleDateString()}\n`;
-        history += `   Rate: ${loan.interestRate * 100}%\n\n`;
+        history += `   Created: ${createdDate}\n`;
+        history += `   Due: ${dueDate}\n`;
+        history += `   Rate: ${(loan.interestRate * 100).toFixed(1)}%\n`;
+        history += `   ID: ${loan._id.toString().substring(0, 8)}...\n\n`;
       });
+
+      history += '💡 Send "status" to check your score or "request 300" to apply for another loan';
 
       await sendWhatsAppMessage(phoneNumber, history);
     } else {
@@ -359,6 +420,7 @@ const handleWhatsAppHistory = async (phoneNumber) => {
     }
   } catch (error) {
     await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp history failed', { error: error.message });
   }
 };
 
