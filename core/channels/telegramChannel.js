@@ -26,7 +26,9 @@ logger.info('Telegram mode detection', {
   RENDER: !!process.env.RENDER,
   PORT: !!process.env.PORT,
   useWebhook,
-  mode: useWebhook ? 'webhook' : 'polling'
+  mode: useWebhook ? 'webhook' : 'polling',
+  timestamp: new Date().toISOString(), // Force restart marker
+  cacheBreaker: Math.random() // Ensure new deployment
 });
 
 // Create bot instance - ALWAYS disable polling initially to avoid conflicts
