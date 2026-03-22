@@ -34,7 +34,11 @@ const config = {
     seedPhrase: process.env.WDK_SEED_PHRASE || '',
     blockchain: process.env.WDK_BLOCKCHAIN || 'ethereum',
     network: process.env.WDK_NETWORK || 'sepolia',
-    rpcUrl: process.env.WDK_RPC_URL || ''
+    rpcUrl: process.env.WDK_RPC_URL || '',
+    // ERC-4337 Account Abstraction
+    bundlerUrl: process.env.BUNDLER_URL || '',
+    paymasterUrl: process.env.PAYMASTER_URL || '',
+    entryPointAddress: process.env.ENTRY_POINT_ADDRESS || '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789'
   },
   ml: {
     defaultThreshold: parseFloat(process.env.ML_DEFAULT_THRESHOLD || '0.35')

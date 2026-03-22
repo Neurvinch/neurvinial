@@ -3,6 +3,7 @@
 // ============================================
 // Singleton that wraps the Tether WDK SDK.
 // Handles: wallet init, account creation, USDT transfers, balance checks.
+// Supports ERC-4337 Account Abstraction (gasless transactions via Bundler + Paymaster)
 //
 // NO MOCKS - This file uses only real WDK operations.
 // If WDK is not properly configured, operations will fail with clear errors.
@@ -45,7 +46,11 @@ const state = {
   wdk: null,
   sentinelAccount: null,
   initialized: false,
-  seedPhrase: null
+  seedPhrase: null,
+  bundlerUrl: null,
+  paymasterUrl: null,
+  entryPointAddress: null,
+  uses4337: false
 };
 
 /**
@@ -91,6 +96,7 @@ function validateSeedPhrase(phrase) {
 
 /**
  * Initialize the WDK with the seed phrase from config.
+ * Also initializes 4337 support if bundler/paymaster URLs are provided.
  * REQUIRED: WDK_SEED_PHRASE must be set in environment.
  * NO FALLBACK to simulation mode.
  */
@@ -126,6 +132,24 @@ async function initialize() {
       provider: rpcUrl
     };
 
+    // Add 4337 config if bundler/paymaster URLs are provided
+    if (config.wdk.bundlerUrl && config.wdk.paymasterUrl) {
+      evmConfig.bundlerUrl = config.wdk.bundlerUrl;
+      evmConfig.paymasterUrl = config.wdk.paymasterUrl;
+      evmConfig.entryPointAddress = config.wdk.entryPointAddress;
+      state.uses4337 = true;
+      state.bundlerUrl = config.wdk.bundlerUrl;
+      state.paymasterUrl = config.wdk.paymasterUrl;
+      state.entryPointAddress = config.wdk.entryPointAddress;
+      logger.info('ERC-4337 Account Abstraction ENABLED', {
+        bundler: config.wdk.bundlerUrl.substring(0, 40) + '...',
+        paymaster: config.wdk.paymasterUrl.substring(0, 40) + '...',
+        entryPoint: config.wdk.entryPointAddress
+      });
+    } else {
+      logger.info('ERC-4337 Account Abstraction DISABLED (no bundler/paymaster URLs)');
+    }
+
     // Create WDK instance with the seed phrase
     state.wdk = new WDK(seedPhrase)
       .registerWallet(config.wdk.blockchain, WalletManagerEvm, evmConfig);
@@ -144,7 +168,8 @@ async function initialize() {
       network: config.wdk.network,
       rpcUrl: rpcUrl.substring(0, 30) + '...',
       sentinelAddress: address,
-      ethBalance: (Number(ethBalance) / 1e18).toFixed(6) + ' ETH'
+      ethBalance: (Number(ethBalance) / 1e18).toFixed(6) + ' ETH',
+      accountAbstraction: state.uses4337 ? 'enabled' : 'disabled'
     });
 
     state.initialized = true;
@@ -159,6 +184,13 @@ async function initialize() {
  */
 function isInitialized() {
   return state.initialized && state.sentinelAccount !== null;
+}
+
+/**
+ * Check if 4337 Account Abstraction is enabled (bundler + paymaster configured).
+ */
+function is4337Enabled() {
+  return state.uses4337 && state.bundlerUrl && state.paymasterUrl;
 }
 
 /**
@@ -195,7 +227,14 @@ async function createWalletForAgent(index) {
 /**
  * Send USDT to a recipient address.
  * This is the core on-chain operation for loan disbursement.
- * REAL TRANSACTION - requires gas (ETH) in Sentinel's wallet.
+ *
+ * MODE 1 - Traditional (if no 4337):
+ *   User has ETH → Signs tx → Pays gas → Receives USDT
+ *
+ * MODE 2 - 4337 Account Abstraction (if bundler + paymaster configured):
+ *   User has NO ETH → Signs UserOperation → Bundler submits → Paymaster pays gas → Receives USDT
+ *
+ * REAL TRANSACTION - requires either ETH (traditional) or Paymaster sponsorship (4337)
  */
 async function sendUSDT(recipientAddress, amount) {
   requireInitialized();
@@ -203,12 +242,17 @@ async function sendUSDT(recipientAddress, amount) {
   const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
   const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT has 6 decimals
 
+  const is4337Active = is4337Enabled();
+
   logger.info('Initiating USDT transfer', {
     to: recipientAddress,
     amount,
     amountBaseUnits: amountInBaseUnits.toString(),
     token: usdtContract,
-    network: config.wdk.network
+    network: config.wdk.network,
+    transferMode: is4337Active ? '4337-abstracted' : 'traditional',
+    bundlerUrl: is4337Active ? config.wdk.bundlerUrl.substring(0, 40) + '...' : 'N/A',
+    paymasterUrl: is4337Active ? config.wdk.paymasterUrl.substring(0, 40) + '...' : 'N/A'
   });
 
   try {
@@ -222,18 +266,22 @@ async function sendUSDT(recipientAddress, amount) {
       to: recipientAddress,
       amount,
       txHash: result.hash,
-      fee: result.fee?.toString()
+      fee: result.fee?.toString(),
+      transferMode: is4337Active ? '4337-abstracted' : 'traditional',
+      gasSponsored: is4337Active ? 'paymaster' : 'sender'
     });
 
     return {
       hash: result.hash,
-      fee: result.fee?.toString() || '0'
+      fee: result.fee?.toString() || '0',
+      mode: is4337Active ? '4337' : 'traditional'
     };
   } catch (err) {
     logger.error('USDT transfer FAILED', {
       to: recipientAddress,
       amount,
-      error: err.message
+      error: err.message,
+      transferMode: is4337Active ? '4337-abstracted' : 'traditional'
     });
     throw new Error(`USDT transfer failed: ${err.message}`);
   }
@@ -350,6 +398,7 @@ module.exports = {
   // Core operations
   initialize,
   isInitialized,
+  is4337Enabled,
   getSentinelAddress,
   createWalletForAgent,
   sendUSDT,

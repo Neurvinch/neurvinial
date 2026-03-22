@@ -65,6 +65,7 @@ app.get('/health', async (req, res) => {
     components: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
       wdk: walletManager.isInitialized() ? 'initialized' : 'not_initialized',
+      accountAbstraction: walletManager.is4337Enabled() ? 'enabled' : 'disabled',
       openclaw: 'initialized',
       telegram: 'disabled',
       whatsapp: !!process.env.TWILIO_ACCOUNT_SID ? 'active' : 'disabled'
