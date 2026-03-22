@@ -14,9 +14,27 @@ const mongoose = require('mongoose');
 // Initialize Telegram Bot
 const telegramBotToken = config.telegram?.botToken;
 // Use webhooks in production, polling in development
-const useWebhook = process.env.NODE_ENV === 'production';
+// Detect production environment more robustly (Render.com doesn't always set NODE_ENV)
+const useWebhook = process.env.NODE_ENV === 'production' ||
+                   process.env.RENDER ||
+                   process.env.PORT ||
+                   process.env.HEROKU_APP_NAME;
+
+// Log the environment detection for debugging
+logger.info('Telegram mode detection', {
+  NODE_ENV: process.env.NODE_ENV,
+  RENDER: !!process.env.RENDER,
+  PORT: !!process.env.PORT,
+  useWebhook,
+  mode: useWebhook ? 'webhook' : 'polling'
+});
+
+// Create bot instance - disable polling in production to avoid conflicts
 const bot = telegramBotToken
-  ? new TelegramBot(telegramBotToken, { polling: !useWebhook })
+  ? new TelegramBot(telegramBotToken, {
+      polling: !useWebhook,  // Only enable polling in development
+      webHook: false         // Explicitly disable built-in webhook handling
+    })
   : null;
 
 // User context tracking
@@ -1559,8 +1577,28 @@ const initializeTelegram = () => {
   try {
     const mode = useWebhook ? 'webhook' : 'polling';
 
-    if (!useWebhook) {
+    if (useWebhook) {
+      // Production: use webhooks only
+      // Stop polling if it was previously started
+      if (bot.isPolling()) {
+        bot.stopPolling();
+        logger.info('Stopped Telegram polling for webhook mode');
+      }
+
+      // Clear any existing event listeners to avoid duplicates
+      bot.removeAllListeners('message');
+      bot.removeAllListeners('error');
+      bot.removeAllListeners('polling_error');
+
+      logger.info('Telegram bot configured for webhook mode');
+    } else {
       // Development: use polling
+      // Clear existing listeners first
+      bot.removeAllListeners('message');
+      bot.removeAllListeners('error');
+      bot.removeAllListeners('polling_error');
+
+      // Add fresh listeners
       bot.on('message', handleMessage);
       bot.on('error', (error) => {
         // Ignore 409 Conflict errors (normal during deployments)
@@ -1576,6 +1614,8 @@ const initializeTelegram = () => {
         }
         logger.error('Telegram polling error', { error: error.message });
       });
+
+      logger.info('Telegram bot configured for polling mode');
     }
     // In production (webhook mode), messages are handled via Express route
 
