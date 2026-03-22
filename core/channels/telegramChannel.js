@@ -549,20 +549,6 @@ const handleMessage = async (msg) => {
 };
 
 /**
- * Handle Telegram webhook (for HTTP-based integration).
- */
-const handleTelegramWebhook = async (payload) => {
-  try {
-    if (payload && payload.message) {
-      await handleMessage(payload.message);
-    }
-  } catch (error) {
-    logger.error('Telegram webhook error', { error: error.message });
-    throw error;
-  }
-};
-
-/**
  * Initialize Telegram bot.
  */
 const initializeTelegram = () => {
