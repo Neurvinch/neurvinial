@@ -14,11 +14,11 @@ require('dotenv').config();
 // Disable Mongoose buffering globally — queries fail immediately instead of
 // hanging for 10 seconds when MongoDB is unavailable.
 const mongoose = require('mongoose');
-const dns = require('dns');
+const { configureDNS } = require('./utils/dnsResolver');
 mongoose.set('bufferCommands', false);
 
-// Force IPv4 DNS resolution to avoid timeout issues with IPv6
-dns.setDefaultResultOrder('ipv4first');
+// Force IPv4 DNS resolution and use Google DNS to avoid timeout issues
+configureDNS();
 
 const config = require('./config');
 const logger = require('./config/logger');
