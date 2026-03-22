@@ -280,9 +280,6 @@ Status: ⏳ Active
     logger.error('Telegram request failed', { error: error.message });
   }
 };
-    logger.error('Telegram request failed', { error: error.message });
-  }
-};
 
 /**
  * Handle /balance command.
