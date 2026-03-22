@@ -29,10 +29,10 @@ logger.info('Telegram mode detection', {
   mode: useWebhook ? 'webhook' : 'polling'
 });
 
-// Create bot instance - disable polling in production to avoid conflicts
+// Create bot instance - ALWAYS disable polling initially to avoid conflicts
 const bot = telegramBotToken
   ? new TelegramBot(telegramBotToken, {
-      polling: !useWebhook,  // Only enable polling in development
+      polling: false,        // Always start with polling disabled
       webHook: false         // Explicitly disable built-in webhook handling
     })
   : null;
@@ -1593,7 +1593,7 @@ const initializeTelegram = () => {
       logger.info('Telegram bot configured for webhook mode');
     } else {
       // Development: use polling
-      // Clear existing listeners first
+      // Clear existing listeners first to avoid duplicates
       bot.removeAllListeners('message');
       bot.removeAllListeners('error');
       bot.removeAllListeners('polling_error');
@@ -1614,6 +1614,12 @@ const initializeTelegram = () => {
         }
         logger.error('Telegram polling error', { error: error.message });
       });
+
+      // Start polling manually (since we disabled it in constructor)
+      if (!bot.isPolling()) {
+        bot.startPolling();
+        logger.info('Started Telegram polling manually');
+      }
 
       logger.info('Telegram bot configured for polling mode');
     }
