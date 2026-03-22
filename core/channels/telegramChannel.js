@@ -685,6 +685,66 @@ Keep repaying on time to improve your credit and unlock higher loan amounts!
   }
 }
 
+async function handleLimit(msg) {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const context = await getUserContext(chatId, userId);
+
+  if (!context.registered) {
+    sendMessage(chatId, '❌ Please /register first to check your loan limit.');
+    return;
+  }
+
+  try {
+    const tierLimits = {
+      'A': 5000,
+      'B': 2000,
+      'C': 500,
+      'D': 0
+    };
+
+    const interestRates = {
+      'A': 3.5,
+      'B': 5.0,
+      'C': 8.0,
+      'D': 'N/A'
+    };
+
+    const maxLoan = tierLimits[context.tier] || 0;
+    const rate = interestRates[context.tier] || 'N/A';
+
+    const message = `💰 *Your Loan Limits*
+
+📊 **Current Profile:**
+• Credit Score: ${context.creditScore || 50}/100
+• Tier: ${context.tier || 'C'}
+• Status: ${context.tier === 'D' ? 'Not Eligible' : 'Eligible'}
+
+💵 **Loan Terms:**
+• Maximum Amount: $${maxLoan} USDT
+• Interest Rate: ${rate}% APR
+• Loan Term: 30 days
+• Network: Ethereum Sepolia (ERC-4337)
+
+🎯 **To Apply:**
+• Send: /request ${Math.min(maxLoan || 100, 300)}
+• Example: /request ${Math.min(maxLoan || 100, 300)}
+
+${context.tier === 'D'
+  ? '❌ **Ineligible:** Build credit history to qualify for loans'
+  : context.tier === 'C'
+    ? '📈 **Tip:** Repay loans on-time to unlock higher limits'
+    : context.tier === 'B'
+      ? '✅ **Good Credit:** Keep it up to reach Tier A ($5000 limit)'
+      : '🌟 **Excellent Credit:** Maximum privileges unlocked'}`;
+
+    sendMessage(chatId, message);
+
+  } catch (error) {
+    sendMessage(chatId, `❌ Error checking limits: ${error.message}`);
+  }
+}
+
 async function handleHealth(msg) {
   try {
     const ethBal = await walletManager.getSentinelETHBalance();
@@ -791,6 +851,7 @@ async function handleHelp(msg) {
 
 🎯 **Quick Actions:**
 • /status - Check credit (Score: ${context.creditScore || 50})
+• /limit - See loan limits & terms
 • /request ${Math.min(maxLoan, 300)} - Apply for loan
 • /wallet - View your address
 • /balance - Check loan portfolio
@@ -848,6 +909,8 @@ async function handleMessage(msg) {
       await handleBalance(msg);
     } else if (text.startsWith('/repay')) {
       await handleRepay(msg);
+    } else if (text.startsWith('/limit')) {
+      await handleLimit(msg);
     } else if (text.startsWith('/health')) {
       await handleHealth(msg);
     } else if (text.startsWith('/help')) {
