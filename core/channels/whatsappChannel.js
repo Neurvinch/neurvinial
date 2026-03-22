@@ -198,8 +198,8 @@ const handleWhatsAppRequest = async (phoneNumber, amount) => {
   }
 
   const parsedAmount = parseInt(amount);
-  if (!parsedAmount || parsedAmount < 100) {
-    await sendWhatsAppMessage(phoneNumber, '📝 Please specify a valid amount. Example: "request 500"');
+  if (!parsedAmount || parsedAmount < 10) {
+    await sendWhatsAppMessage(phoneNumber, '📝 Please specify a valid amount. Example: "request 100" or "request 50"\n\n💡 Min: $10, send "limit" to see your max');
     return;
   }
 
@@ -477,12 +477,37 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
     await handleWhatsAppHistory(phoneNumber);
   } else if (command === 'balance') {
     try {
-      const walletManager = require('../wdk/walletManager');
-      const ethBal = await walletManager.getSentinelETHBalance();
-      const usdtBal = await walletManager.getSentinelUSDTBalance();
+      if (mongoose.connection.readyState === 1) {
+        // Show user's loan portfolio (not treasury)
+        const loans = await Loan.find({ did: context.did });
 
-      const message = `💰 *Sentinel Treasury*\n\nETH: ${ethBal.balance}\nUSDT: ${usdtBal.balance}`;
-      await sendWhatsAppMessage(phoneNumber, message);
+        const activeLoans = loans.filter(l => !l.repaid);
+        const repaidLoans = loans.filter(l => l.repaid);
+        const totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
+        const totalRepaid = repaidLoans.reduce((sum, l) => sum + l.amount, 0);
+        const activeLoanTotal = activeLoans.reduce((sum, l) => sum + l.amount, 0);
+
+        const message = `💰 *Your Loan Portfolio*
+
+📊 Total Borrowed: $${totalBorrowed} USDT
+✅ Total Repaid: $${totalRepaid} USDT
+⏳ Active Loans: $${activeLoanTotal} USDT
+📈 Loan Count: ${loans.length}
+
+🔄 Active: ${activeLoans.length} loans
+✓ Completed: ${repaidLoans.length} loans
+
+Send "history" to see all loans`;
+
+        await sendWhatsAppMessage(phoneNumber, message);
+      } else {
+        const walletManager = require('../wdk/walletManager');
+        const ethBal = await walletManager.getSentinelETHBalance();
+        const usdtBal = await walletManager.getSentinelUSDTBalance();
+
+        const message = `💰 *Sentinel Treasury*\n\nETH: ${ethBal.balance}\nUSDT: ${usdtBal.balance}`;
+        await sendWhatsAppMessage(phoneNumber, message);
+      }
     } catch (error) {
       await sendWhatsAppMessage(phoneNumber, `❌ Balance check failed: ${error.message}`);
     }

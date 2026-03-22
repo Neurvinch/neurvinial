@@ -195,11 +195,16 @@ const handleRequest = async (msg, args) => {
   }
 
   if (!args || !args.match(/\d+/)) {
-    bot.sendMessage(chatId, '📝 Usage: /request 500\n\n💡 Example: /request 500 (request 500 USDT)');
+    bot.sendMessage(chatId, '📝 Usage: /request 500\n\n💡 Example: /request 500 or /request 50 (min $10)\n\nSend /limit to see your max');
     return;
   }
 
   const amount = parseInt(args.match(/\d+/)[0]);
+
+  if (amount < 10) {
+    bot.sendMessage(chatId, '📝 Minimum loan request: $10 USDT\n\n💡 Send /limit to see your maximum');
+    return;
+  }
 
   try {
     const result = await invokeSkill('sentinel_lending', {
@@ -284,14 +289,42 @@ Status: ⏳ Active
  */
 const handleBalance = async (msg) => {
   const chatId = msg.chat.id;
+  const context = await getOrCreateContext(chatId, msg.from.id);
 
   try {
-    const walletManager = require('../wdk/walletManager');
-    const ethBal = await walletManager.getSentinelETHBalance();
-    const usdtBal = await walletManager.getSentinelUSDTBalance();
+    if (mongoose.connection.readyState === 1 && context.did) {
+      // Show user's loan portfolio (not treasury)
+      const Loan = require('../models').Loan;
+      const loans = await Loan.find({ did: context.did });
 
-    const responseText = `💰 *Sentinel Treasury*\n\nETH: ${ethBal.balance}\nUSDT: ${usdtBal.balance}`;
-    bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+      const activeLoans = loans.filter(l => !l.repaid);
+      const repaidLoans = loans.filter(l => l.repaid);
+      const totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
+      const totalRepaid = repaidLoans.reduce((sum, l) => sum + l.amount, 0);
+      const activeLoanTotal = activeLoans.reduce((sum, l) => sum + l.amount, 0);
+
+      const responseText = `💰 *Your Loan Portfolio*
+
+📊 Total Borrowed: $${totalBorrowed} USDT
+✅ Total Repaid: $${totalRepaid} USDT
+⏳ Active Loans: $${activeLoanTotal} USDT
+📈 Loan Count: ${loans.length}
+
+🔄 Active: ${activeLoans.length} loans
+✓ Completed: ${repaidLoans.length} loans
+
+Send /history to see all loans`;
+
+      bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+    } else {
+      // Fallback to treasury balance
+      const walletManager = require('../wdk/walletManager');
+      const ethBal = await walletManager.getSentinelETHBalance();
+      const usdtBal = await walletManager.getSentinelUSDTBalance();
+
+      const responseText = `💰 *Sentinel Treasury*\n\nETH: ${ethBal.balance}\nUSDT: ${usdtBal.balance}`;
+      bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
+    }
   } catch (error) {
     bot.sendMessage(chatId, `❌ Balance check failed: ${error.message}`);
   }
