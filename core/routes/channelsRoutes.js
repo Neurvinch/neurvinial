@@ -7,8 +7,8 @@
 const express = require('express');
 const logger = require('../config/logger');
 const { invokeSkill, listSkills } = require('../agent/openclawIntegration');
-const telegramChannel = require('./telegramChannel');
-const whatsappChannel = require('./whatsappChannel');
+const telegramChannel = require('../channels/telegramChannel');
+const whatsappChannel = require('../channels/whatsappChannel');
 
 const router = express.Router();
 
