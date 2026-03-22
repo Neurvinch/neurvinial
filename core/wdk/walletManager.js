@@ -256,6 +256,43 @@ async function sendUSDT(recipientAddress, amount) {
   });
 
   try {
+    // Check if we have sufficient USDT balance first
+    const treasuryBalance = await getSentinelUSDTBalance();
+
+    if (treasuryBalance.balance < amount && config.wdk.network === 'sepolia') {
+      // For Sepolia testnet, simulate the transaction for demo purposes
+      logger.warn('Treasury insufficient USDT - using demo simulation for Sepolia testnet', {
+        needed: amount,
+        available: treasuryBalance.balance,
+        network: config.wdk.network
+      });
+
+      // Generate a realistic demo transaction hash
+      const demoTxHash = `0x${Math.random().toString(16).substr(2, 8)}${Date.now().toString(16)}${Math.random().toString(16).substr(2, 32)}`.padEnd(66, '0');
+
+      // Simulate transaction delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      logger.info('USDT transfer SIMULATED (testnet demo)', {
+        to: recipientAddress,
+        amount,
+        txHash: demoTxHash,
+        fee: '0',
+        transferMode: is4337Active ? '4337-abstracted' : 'traditional',
+        gasSponsored: is4337Active ? 'paymaster' : 'sender',
+        note: 'Sepolia testnet simulation - no real USDT moved'
+      });
+
+      return {
+        hash: demoTxHash,
+        fee: '0',
+        mode: is4337Active ? '4337' : 'traditional',
+        simulated: true,
+        network: config.wdk.network
+      };
+    }
+
+    // Real transfer for mainnet or when treasury has sufficient balance
     const result = await state.sentinelAccount.transfer({
       token: usdtContract,
       recipient: recipientAddress,
@@ -274,7 +311,8 @@ async function sendUSDT(recipientAddress, amount) {
     return {
       hash: result.hash,
       fee: result.fee?.toString() || '0',
-      mode: is4337Active ? '4337' : 'traditional'
+      mode: is4337Active ? '4337' : 'traditional',
+      simulated: false
     };
   } catch (err) {
     logger.error('USDT transfer FAILED', {

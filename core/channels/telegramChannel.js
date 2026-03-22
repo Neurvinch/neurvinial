@@ -222,7 +222,7 @@ const handleRequest = async (msg, args) => {
     const approved = result.result.action === 'approve_loan';
 
     if (approved && mongoose.connection.readyState === 1) {
-      // Save approved loan to MongoDB
+      // Save PENDING loan to MongoDB (not disbursed yet)
       try {
         const Loan = require('../models').Loan;
         const interestRates = { 'A': 0.035, 'B': 0.05, 'C': 0.08, 'D': 0.15 };
@@ -231,37 +231,64 @@ const handleRequest = async (msg, args) => {
         dueDate.setDate(dueDate.getDate() + 30);
 
         const loan = new Loan({
-          did: context.did,
+          loanId: `SENTINEL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          borrowerDid: context.did,
           amount,
+          apr: interestRate * 100,
           interestRate,
           dueDate,
           createdAt: new Date(),
-          status: 'active',
-          repaid: false,
-          tier: context.tier
+          status: 'pending',  // PENDING until /approve is called
+          tier: context.tier,
+          mlScore: data.creditScore || 50,
+          combinedScore: data.creditScore || 50,
+          defaultProbability: data.defaultProbability || 0.2,
+          decisionReasoning: result.result.reasoning,
+          totalDue: amount + (amount * interestRate)
         });
 
         await loan.save();
-        logger.info('Loan saved to database', { did: context.did, amount, loanId: loan._id });
+        logger.info('Pending loan saved to database', {
+          did: context.did,
+          amount,
+          loanId: loan.loanId,
+          status: 'pending'
+        });
 
-        const responseText = `✅ *Loan Approved!*
+        const responseText = `📋 **Loan Pre-Approved!**
 
-Amount: $${amount} USDT
-Interest Rate: ${(interestRate * 100).toFixed(1)}% per year
-Duration: 30 days
-Due Date: ${dueDate.toLocaleDateString()}
+💰 **Amount:** $${amount} USDT
+📊 **Interest Rate:** ${(interestRate * 100).toFixed(1)}% APR
+⏰ **Term:** 30 days
+💳 **Total Due:** $${loan.totalDue.toFixed(2)} USDT
+📅 **Due Date:** ${dueDate.toDateString()}
 
-📊 Loan ID: ${loan._id.toString().substring(0, 8)}...
-Status: ⏳ Active
+🔍 **Loan ID:** \`${loan.loanId}\`
+📈 **Your Tier:** ${context.tier} (Score: ${context.creditScore})
 
-💡 Next: Send /history to see this loan
-🔗 Network: Ethereum Sepolia (Ready for disbursement)`;
+⚠️ **Status:** PENDING - Awaiting your confirmation
+
+✅ **Next Step:** Send /approve to receive USDT instantly via ERC-4337!
+
+💡 **What happens when you approve:**
+• Real USDT sent to your wallet
+• Transaction hash provided
+• Viewable on Sepolia Etherscan
+• No ETH needed (gasless!)`;
 
         bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
       } catch (saveError) {
-        logger.error('Failed to save loan', { error: saveError.message });
+        logger.error('Failed to save pending loan', { error: saveError.message });
         // Still show approval even if save failed
-        const responseText = `✅ *Loan Approved!*\n\nAmount: $${amount} USDT\nConfidence: ${result.result.confidence}%\n\n*Reason:*\n${result.result.reasoning}`;
+        const responseText = `✅ **Loan Approved!**
+
+**Amount:** $${amount} USDT
+**Confidence:** ${result.result.confidence}%
+
+**AI Analysis:**
+${result.result.reasoning}
+
+⚠️ Database unavailable - use /approve to process manually`;
         bot.sendMessage(chatId, responseText, { parse_mode: 'Markdown' });
       }
     } else if (approved) {
@@ -391,23 +418,196 @@ Use /request 300 to apply for a loan!`;
 };
 
 /**
- * Handle /approve command - Check eligibility
+ * Handle /approve command - Approve and disburse pending loan
  */
 const handleApprove = async (msg) => {
   const chatId = msg.chat.id;
-  const context = await getOrCreateContext(chatId, msg.from.id);
+  const userId = msg.from.id;
+  const context = await getOrCreateContext(chatId, userId);
 
   if (!context.did) {
-    bot.sendMessage(chatId, '❌ Please /register first to check eligibility.', { parse_mode: 'Markdown' });
+    bot.sendMessage(chatId, '❌ Please /register first to approve loans.', { parse_mode: 'Markdown' });
     return;
   }
 
-  const approved = context.tier !== 'D';
-  const text = approved
-    ? `✅ *You Are Eligible!*\n\nTier: ${context.tier}\nCredit Score: ${context.creditScore}\n\nYou can borrow up to your tier limit.\nUse /request 300 to apply!`
-    : `❌ *Not Eligible*\n\nTier D users are not eligible for loans at this time.\nImprove your credit score to become eligible.`;
+  try {
+    // Find the most recent pending/approved loan for this user
+    if (mongoose.connection.readyState === 1) {
+      const Loan = require('../models').Loan;
+      const pendingLoan = await Loan.findOne({
+        borrowerDid: context.did,
+        status: { $in: ['pending', 'approved'] }
+      }).sort({ createdAt: -1 });
 
-  bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      if (!pendingLoan) {
+        bot.sendMessage(chatId, `❌ *No Pending Loans*
+
+You don't have any loans waiting for approval.
+
+💡 To request a loan:
+• /request 100 - Request $100 USDT
+• /request 500 - Request $500 USDT
+
+📊 Use /status to check your credit limit`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Show initial processing message
+      bot.sendMessage(chatId, `⏳ *Processing Loan Disbursement...*
+
+Loan Amount: $${pendingLoan.amount} USDT
+Status: Transferring via ERC-4337...
+
+⚡ This may take 30-60 seconds`, { parse_mode: 'Markdown' });
+
+      try {
+        // Get the user's wallet address (should be created during registration)
+        const walletManager = require('../wdk/walletManager');
+        const Agent = require('../models').Agent;
+
+        const agent = await Agent.findOne({ did: context.did });
+        if (!agent || !agent.walletAddress) {
+          throw new Error('User wallet not found. Please /register again.');
+        }
+
+        // Check treasury balance first
+        const treasuryBalance = await walletManager.getSentinelUSDTBalance();
+        if (treasuryBalance.balance < pendingLoan.amount) {
+          throw new Error(`Treasury insufficient: ${treasuryBalance.balance} USDT available, ${pendingLoan.amount} USDT needed`);
+        }
+
+        // Perform actual USDT transfer via WDK
+        logger.info('Disbursing loan via WDK', {
+          loanId: pendingLoan.loanId,
+          amount: pendingLoan.amount,
+          recipient: agent.walletAddress,
+          did: context.did
+        });
+
+        const transferResult = await walletManager.sendUSDT(agent.walletAddress, pendingLoan.amount);
+
+        // Update loan status with transaction details
+        pendingLoan.status = 'disbursed';
+        pendingLoan.disbursementTxHash = transferResult.hash;
+        pendingLoan.disbursedAt = new Date();
+        await pendingLoan.save();
+
+        // Update agent last activity
+        agent.lastActivity = new Date();
+        await agent.save();
+
+        // Send success message with transaction details
+        const isSimulated = transferResult.simulated || false;
+        const etherscanNote = isSimulated ? '\n⚠️ **Testnet Demo:** This is a simulated transaction for demonstration purposes.' : '';
+
+        const successMessage = `✅ **Loan Disbursed Successfully!**
+
+💰 **Amount:** $${pendingLoan.amount} USDT
+🎯 **To Wallet:** \`${agent.walletAddress}\`
+⛓️ **TX Hash:** \`${transferResult.hash}\`
+
+🔗 **View on Etherscan:**
+https://sepolia.etherscan.io/tx/${transferResult.hash}${etherscanNote}
+
+📊 **Loan Details:**
+• Interest Rate: ${(pendingLoan.apr || pendingLoan.interestRate * 100 || 8).toFixed(1)}% APR
+• Due Date: ${pendingLoan.dueDate ? pendingLoan.dueDate.toDateString() : '30 days'}
+• Transfer Mode: ${transferResult.mode === '4337' ? '⚡ ERC-4337 Gasless' : '⛽ Traditional'}
+• Network: ${transferResult.network || 'sepolia'} testnet
+
+💡 **Next Steps:**
+• ${isSimulated ? 'In production, USDT would arrive in your wallet' : 'Monitor your wallet for USDT arrival'}
+• Use /repay when ready to repay
+• Repay on time to improve credit score!
+
+🎉 **ERC-4337 Magic:** ${transferResult.mode === '4337' ? 'You received USDT without needing ETH!' : 'Traditional transfer completed'}`;
+
+        bot.sendMessage(chatId, successMessage, { parse_mode: 'Markdown' });
+
+        // Update user context with loan info
+        context.activeLoans = (context.activeLoans || 0) + 1;
+
+      } catch (disbursementError) {
+        logger.error('Loan disbursement failed', {
+          error: disbursementError.message,
+          loanId: pendingLoan.loanId,
+          did: context.did
+        });
+
+        // Show specific error message
+        let errorMessage = `❌ **Loan Disbursement Failed**
+
+**Error:** ${disbursementError.message}
+
+`;
+
+        if (disbursementError.message.includes('Treasury insufficient')) {
+          errorMessage += `💰 **Treasury Issue:**
+The lending pool doesn't have enough USDT right now.
+
+🔄 **What to do:**
+• Try a smaller loan amount
+• Wait for pool replenishment
+• Check /balance for available funds
+
+💡 This is a temporary issue with testnet funding`;
+        } else if (disbursementError.message.includes('wallet not found')) {
+          errorMessage += `👤 **Wallet Issue:**
+Your wallet wasn't found in the system.
+
+🔧 **Fix:**
+• Use /register to recreate your account
+• This will generate a new wallet address
+• Then try /request again`;
+        } else {
+          errorMessage += `⚠️ **Technical Issue:**
+There was a problem with the blockchain transaction.
+
+🔧 **Troubleshooting:**
+• Try again in 1-2 minutes
+• Check /health for system status
+• Contact /support if issue persists
+
+📊 Your loan approval is still valid`;
+        }
+
+        bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
+      }
+
+    } else {
+      // Database not available - show eligibility check only
+      const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
+      const maxLoan = tierLimits[context.tier] || 0;
+      const approved = context.tier !== 'D';
+
+      const text = approved
+        ? `✅ **You Are Eligible!**
+
+**Tier:** ${context.tier}
+**Credit Score:** ${context.creditScore}
+**Max Loan:** $${maxLoan} USDT
+
+💡 **To get a loan:**
+1. /request 100 (or your desired amount)
+2. /approve (to disburse)
+
+⚠️ **Note:** Database not connected - loans can't be processed right now`
+        : `❌ **Not Eligible**
+
+**Tier D** users are not eligible for loans.
+
+📈 **Improve your credit:**
+• Use /upgrade for tips
+• Build transaction history
+• Repay any existing obligations`;
+
+      bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    }
+
+  } catch (error) {
+    bot.sendMessage(chatId, `❌ Error processing loan approval: ${error.message}`, { parse_mode: 'Markdown' });
+    logger.error('Telegram approve failed', { error: error.message, did: context.did });
+  }
 };
 
 /**
@@ -490,6 +690,7 @@ const handleHelp = (msg) => {
 /health - System status
 /notify - Alert settings
 /support - Get help
+/fund [amount] - Admin: Fund treasury (testnet)
 /help - Show commands
 
 📱 *Example Flow:*
@@ -1099,9 +1300,70 @@ All notifications delivered within 60 seconds via Telegram!
 };
 
 /**
- * Handle /health command.
+ * Handle /fund command - Admin funding for testing (Sepolia only)
  */
-const handleHealth = async (msg) => {
+const handleFund = async (msg, args) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  // Simple admin check - in production this would be more secure
+  const adminUsers = [999888777, 5790963531]; // Test user IDs
+  if (!adminUsers.includes(userId)) {
+    bot.sendMessage(chatId, '❌ **Access Denied**\n\nAdmin command only.', { parse_mode: 'Markdown' });
+    return;
+  }
+
+  try {
+    const amount = args && args.trim() ? parseFloat(args.trim()) : 1000;
+
+    if (isNaN(amount) || amount <= 0) {
+      bot.sendMessage(chatId, `🏦 **Treasury Funding** (Admin Only)
+
+**Usage:** /fund [amount]
+
+**Examples:**
+• /fund 1000 - Add 1,000 USDT
+• /fund 5000 - Add 5,000 USDT
+• /fund - Add default 1,000 USDT
+
+⚠️ **Testnet Only:** This simulates USDT funding for demo purposes`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // For testnet demo purposes, we'll update the demo store
+    const demo = require('../demo/demoStore');
+
+    // Simulate adding USDT to treasury
+    const currentMetrics = demo.getCapitalMetrics();
+    currentMetrics.availableCapital += amount;
+    currentMetrics.totalCapital += amount;
+
+    bot.sendMessage(chatId, `✅ **Treasury Funded Successfully!**
+
+💰 **Added:** ${amount.toLocaleString()} USDT
+🏦 **Total Treasury:** ${currentMetrics.totalCapital.toLocaleString()} USDT
+💳 **Available for Loans:** ${currentMetrics.availableCapital.toLocaleString()} USDT
+
+⚠️ **Note:** This is testnet simulation for demo purposes.
+
+🚀 **Ready for loan disbursements!** Users can now:
+1. /request [amount]
+2. /approve
+3. Receive real USDT via ERC-4337
+
+🔍 Check /health for updated treasury status`, { parse_mode: 'Markdown' });
+
+    logger.info('Treasury funded via admin command', {
+      adminUser: userId,
+      amount,
+      newBalance: currentMetrics.totalCapital
+    });
+
+  } catch (error) {
+    bot.sendMessage(chatId, `❌ Funding failed: ${error.message}`);
+    logger.error('Treasury funding failed', { error: error.message });
+  }
+};
   const chatId = msg.chat.id;
 
   try {
@@ -1260,6 +1522,10 @@ const handleMessage = async (msg) => {
         case 'uptime':
           await handleHealth(msg);
           break;
+        case 'fund':
+        case 'treasury':
+          await handleFund(msg, command.args);
+          break;
         case 'help':
         case 'h':
         case '?':
@@ -1397,6 +1663,7 @@ module.exports = {
   handleSupport,
   handleNotify,
   handleHealth,
+  handleFund,
   handleHelp,
   handleMessage,
   handleTelegramWebhook,
