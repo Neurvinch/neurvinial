@@ -1,25 +1,46 @@
 {
+  "name": "sentinel",
+  "version": "1.0.0",
+  "description": "Autonomous AI Lending Agent for the Agent Economy",
   "skills": {
     "entries": {
       "sentinel_credit": {
         "enabled": true,
+        "description": "Credit assessment skill - evaluates agent creditworthiness",
         "env": {
-          "SENTINEL_API_URL": "http://localhost:3000"
+          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}"
         }
       },
       "sentinel_lending": {
         "enabled": true,
+        "description": "Lending decision skill - processes loan requests autonomously",
         "env": {
-          "SENTINEL_API_URL": "http://localhost:3000"
+          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}"
         }
       },
       "sentinel_recovery": {
         "enabled": true,
+        "description": "Recovery and liquidation skill - handles overdue loans",
         "env": {
-          "SENTINEL_API_URL": "http://localhost:3000",
-          "TELEGRAM_BOT_TOKEN": "7672027976:AAHxD_eX0TX9q9jNHrrm4UGtE9Ob95MhNwo"
+          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}",
+          "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN}"
+        }
+      },
+      "sentinel_wdk": {
+        "enabled": true,
+        "description": "WDK wallet operations - on-chain USDT transfers and balances",
+        "env": {
+          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}",
+          "WDK_NETWORK": "${WDK_NETWORK:-sepolia}"
         }
       }
+    }
+  },
+  "tools": {
+    "wdk": {
+      "enabled": true,
+      "description": "Tether WDK wallet operations",
+      "source": "@tetherto/wdk-agent-skills"
     }
   }
 }
