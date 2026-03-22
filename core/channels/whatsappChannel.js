@@ -72,7 +72,11 @@ const sendWhatsAppMessage = async (toPhoneNumber, message) => {
   const twilioWhatsAppFrom = process.env.TWILIO_WHATSAPP_FROM || process.env.TWILIO_PHONE_NUMBER;
 
   if (!twilioAccountSid || !twilioAuthToken || !twilioWhatsAppFrom) {
-    logger.warn('WhatsApp not configured - missing Twilio credentials');
+    const missing = [];
+    if (!twilioAccountSid) missing.push('TWILIO_ACCOUNT_SID');
+    if (!twilioAuthToken) missing.push('TWILIO_AUTH_TOKEN');
+    if (!twilioWhatsAppFrom) missing.push('TWILIO_WHATSAPP_FROM');
+    logger.error('❌ WhatsApp sending BLOCKED', { missingEnvVars: missing.join(', ') });
     return false;
   }
 
@@ -94,26 +98,50 @@ const sendWhatsAppMessage = async (toPhoneNumber, message) => {
       }
     );
 
-    logger.debug('WhatsApp message sent', { to: toPhoneNumber });
+    logger.info('✅ WhatsApp message sent', { to: toPhoneNumber, messageLength: message.length });
     return true;
   } catch (error) {
-    logger.error('Failed to send WhatsApp message', { error: error.message });
+    logger.error('❌ Failed to send WhatsApp message', {
+      to: toPhoneNumber,
+      error: error.message,
+      status: error.response?.status,
+      twilioError: error.response?.data
+    });
     return false;
   }
 };
 
 /**
  * Parse WhatsApp webhook body.
+ * Handles text messages, reactions, media, and empty messages.
  */
 const parseWhatsAppWebhook = (body) => {
-  const { From, Body } = body;
+  const { From, Body, MessageType, ButtonText, MediaUrl0 } = body;
 
-  if (!From || !Body) {
+  if (!From) {
     return null;
   }
 
   const phoneNumber = From.replace('whatsapp:', '');
-  const message = Body.trim();
+
+  // Handle different message types
+  // - Text messages have Body
+  // - Reactions have empty Body but we still want to respond
+  // - Media (images/stickers) have MediaUrl0
+  // - Button responses have ButtonText
+  let message = '';
+
+  if (Body && Body.trim()) {
+    message = Body.trim();
+  } else if (ButtonText && ButtonText.trim()) {
+    message = ButtonText.trim();
+  } else if (MediaUrl0) {
+    // User sent an image/video/sticker - treat as greeting
+    message = 'hi';
+  } else {
+    // Reaction or empty message - treat as greeting
+    message = 'hi';
+  }
 
   return { phoneNumber, message };
 };
