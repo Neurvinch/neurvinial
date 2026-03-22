@@ -1364,6 +1364,11 @@ const handleFund = async (msg, args) => {
     logger.error('Treasury funding failed', { error: error.message });
   }
 };
+
+/**
+ * Handle /health command.
+ */
+const handleHealth = async (msg) => {
   const chatId = msg.chat.id;
 
   try {
