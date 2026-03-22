@@ -14,7 +14,11 @@ require('dotenv').config();
 // Disable Mongoose buffering globally — queries fail immediately instead of
 // hanging for 10 seconds when MongoDB is unavailable.
 const mongoose = require('mongoose');
+const dns = require('dns');
 mongoose.set('bufferCommands', false);
+
+// Force IPv4 DNS resolution to avoid timeout issues with IPv6
+dns.setDefaultResultOrder('ipv4first');
 
 const config = require('./config');
 const logger = require('./config/logger');
@@ -104,7 +108,11 @@ async function start() {
   try {
     // Connect to MongoDB Atlas
     try {
-      await mongoose.connect(config.db.uri);
+      await mongoose.connect(config.db.uri, {
+        family: 4,  // Force IPv4 to avoid DNS timeout issues
+        serverSelectionTimeoutMS: 10000,
+        connectTimeoutMS: 15000,
+      });
       logger.info('Connected to MongoDB Atlas');
       module.exports.isDbConnected = true;
     } catch (dbErr) {
