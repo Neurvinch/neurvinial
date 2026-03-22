@@ -44,6 +44,7 @@ const app = express();
 app.use(helmet());                          // Sets secure HTTP headers
 app.use(cors());                            // Enable CORS for all origins (dev)
 app.use(express.json({ limit: '1mb' }));    // Parse JSON bodies, limit size
+app.use(express.urlencoded({ limit: '1mb', extended: true })); // Parse URL-encoded bodies (for Twilio webhooks)
 
 // Rate limiter: 100 requests per 15 minutes per IP
 app.use(rateLimit({
