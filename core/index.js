@@ -8,6 +8,7 @@
 // 4. Initialize Express with security middleware
 // 5. Mount API routes
 // 6. Start listening
+// 7. Force redeploy to apply new env vars
 
 require('dotenv').config();
 
