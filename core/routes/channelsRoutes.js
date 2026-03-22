@@ -21,14 +21,24 @@ const router = express.Router();
  * Returns status of all channels
  */
 router.get('/status', (req, res) => {
+  const hasAccountSid = !!process.env.TWILIO_ACCOUNT_SID;
+  const hasAuthToken = !!process.env.TWILIO_AUTH_TOKEN;
+  const hasWhatsAppFrom = !!process.env.TWILIO_WHATSAPP_FROM;
+  const whatsappReady = hasAccountSid && hasAuthToken && hasWhatsAppFrom;
+
   const status = {
     telegram: {
       enabled: !!process.env.TELEGRAM_BOT_TOKEN,
       status: process.env.TELEGRAM_BOT_TOKEN ? 'active' : 'disabled'
     },
     whatsapp: {
-      enabled: !!process.env.TWILIO_ACCOUNT_SID,
-      status: process.env.TWILIO_ACCOUNT_SID ? 'active' : 'disabled'
+      enabled: whatsappReady,
+      status: whatsappReady ? 'active' : 'disabled',
+      diagnostics: {
+        accountSid: hasAccountSid ? '✅ configured' : '❌ missing',
+        authToken: hasAuthToken ? '✅ configured' : '❌ missing',
+        whatsappFrom: hasWhatsAppFrom ? '✅ configured' : '❌ missing'
+      }
     },
     skills: listSkills()
   };

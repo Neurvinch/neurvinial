@@ -815,19 +815,19 @@ const handleWhatsAppWebhook = async (req, res) => {
 
     const { phoneNumber, message } = parsed;
 
-    logger.debug('WhatsApp message received', { phoneNumber, message });
+    logger.info('📱 WhatsApp message received', { phoneNumber, message, timestamp: new Date().toISOString() });
 
     // Process message asynchronously
     setImmediate(() => {
       handleWhatsAppMessage(phoneNumber, message).catch((error) => {
-        logger.error('Error handling WhatsApp message', { error: error.message });
+        logger.error('❌ Error handling WhatsApp message', { phoneNumber, message, error: error.message, stack: error.stack });
       });
     });
 
     // Return 200 OK immediately
     res.status(200).json({ success: true });
   } catch (error) {
-    logger.error('WhatsApp webhook error', { error: error.message });
+    logger.error('❌ WhatsApp webhook error', { error: error.message });
     res.status(500).json({ error: error.message });
   }
 };
