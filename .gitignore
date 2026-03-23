@@ -28,3 +28,47 @@ coverage/
 
 # Build output
 dist/
+
+# ============================================
+# TEST FILES (development only)
+# ============================================
+test-*.js
+demo-flow.js
+final-hackathon-validation.js
+test-enhanced-openclaw.js
+
+# ============================================
+# DOCUMENTATION (generated/temporary docs)
+# ============================================
+DEPLOY_NOW.md
+DYNAMIC_REQUEST_AND_BALANCE_FIXED.md
+HACKATHON_READY.md
+LIVE_TEST_RESULTS.md
+LOAN_PERSISTENCE_COMPLETE.md
+PROJECT_SUMMARY.md
+UPDATE_SUMMARY.md
+UX_IMPROVEMENTS_COMPLETE.md
+WHATSAPP_FIX_COMPLETE.md
+WHATSAPP_UX_IMPROVEMENTS.md
+TEACHING.md
+implemneted_plan.md
+test.md
+
+# ============================================
+# DEPLOYMENT & CONFIG (local/CI-only)
+# ============================================
+.railwayignore
+Procfile
+railway.json
+start-sentinel.ps1
+QUICK_START.sh
+START.sh
+
+# ============================================
+# NULL/EMPTY FILES (cleanup)
+# ============================================
+FRONTEND_README.md
+QUICKSTART.md
+TELEGRAM_WEBHOOK_SETUP.md
+TESTING_GUIDE.md
+Sentinel_Project_Doc.md
