@@ -790,33 +790,6 @@ ${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${re
     await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}\n\nTry again or contact support.`);
   }
 };
-${result.newTier !== context.tier ? `\n🎊 *TIER UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
-
-${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
-
-💡 Send "status" to see your updated profile
-💰 Send "request" to get another loan`;
-
-    await sendWhatsAppMessage(phoneNumber, message);
-    logger.info('Loan repaid via WhatsApp', {
-      did: context.did,
-      loanId,
-      amount: loan.amount,
-      txHash
-    });
-  } catch (repaymentError) {
-    logger.error('WhatsApp repay failed', { error: repaymentError.message, phoneNumber });
-
-    // Provide specific error guidance
-    if (repaymentError.message.includes('not in disbursed status')) {
-      await sendWhatsAppMessage(phoneNumber, `❌ Loan status error: ${repaymentError.message}\n\nMake sure the loan has been disbursed with "approve" first.`);
-    } else if (repaymentError.message.includes('not found')) {
-      await sendWhatsAppMessage(phoneNumber, `❌ Loan not found. Please try again or contact support.`);
-    } else {
-      await sendWhatsAppMessage(phoneNumber, `❌ Repayment failed: ${repaymentError.message}\n\nMake sure:\n• You sent REAL USDT to the treasury address\n• You got the TX hash from Etherscan\n• TX hash is exactly 66 characters (0x + 64 hex chars)\n• You\'re repaying the correct amount`);
-    }
-  }
-};
 
 /**
  * Handle WhatsApp balance command
