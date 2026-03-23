@@ -387,6 +387,231 @@ curl http://localhost:3000/health
 
 ---
 
+## 🤖 Telegram Bot Commands
+
+**Try it now:** [@neurvinial_bot](https://t.me/neurvinial_bot)
+
+All features work via **Telegram commands** - **NO raw curl endpoints needed!**
+
+### 30-Second Demo
+
+```
+1. Open: https://t.me/neurvinial_bot
+2. Send: /register
+3. Send: "I need 100 bucks"
+4. Send: /approve
+5. Get: Real Etherscan TX hash ✅
+6. Click: Verify on Ethereum ✅
+```
+
+### Account Commands
+
+| Command | What It Does | Output |
+|---------|-------------|--------|
+| `/start` | Welcome message | Quick intro + suggestions |
+| `/register` | Create account + real WDK wallet | DID + wallet + starting Tier C |
+| `/status` | Your complete credit profile | Score, tier, stats, recommendations |
+| `/help` | Show all commands | Full command list |
+
+### Loan Commands
+
+| Command | What It Does | Output |
+|---------|-------------|--------|
+| `/request 500` | Request $500 loan | Loan approval/denial with terms |
+| `"I need 500 bucks"` | Natural language request | AI understands + processes |
+| `/approve` | Disburse loan (REAL TX!) | Real Etherscan hash + verified transfer |
+| `/repay 0xHash` | Repay with TX proof | Confirms repayment + updates score |
+| `/history` | View all past loans | List with status + stats |
+| `/loans` | Loan dashboard | Active + completed summary |
+| `/limit` | Your borrowing limit | Max amount + example calculation |
+
+### Credit Commands
+
+| Command | What It Does | Output |
+|---------|-------------|--------|
+| `/tiers` | All credit tiers | A/B/C/D breakdown + your current |
+| `/upgrade` | Tips to improve score | Personalized path to next tier |
+
+### Capital Commands
+
+| Command | What It Does | Output |
+|---------|-------------|--------|
+| `/capital` | Full capital overview | Treasury + LP pool + AAVE stats |
+| `/lppool` | LP Agent pool details | How agent-to-agent lending works |
+| `/aave` | AAVE yield status | How idle capital earns 4.2% |
+| `/treasury` | Treasury address & balance | Real wallet on Etherscan |
+
+### System Commands
+
+| Command | What It Does | Output |
+|---------|-------------|--------|
+| `/wallet` | Your WDK wallet address | Real address + Etherscan link |
+| `/balance` | Your USDT balance | Real balance on Sepolia |
+| `/health` | System health check | All services status |
+
+### Natural Language Support 🧠
+
+OpenClaw AI understands natural language!
+
+```
+"I need 500 dollars"
+↓
+Bot: Processing $500 loan request...
+     ✅ APPROVED (Tier C limit: $500)
+     📊 Interest: 8.0% APR
+     Send /approve to confirm
+
+"What's my score?"
+↓
+Bot: Your credit score is 55/100, Tier C
+     You can borrow up to $500
+     Repay on-time to reach Tier B
+
+"Show me LP pool"
+↓
+Bot: 🤝 LP Agent Capital Pool
+     3 Active LP Agents
+     $25,000 Total Committed
+     $23,750 Available
+     [Full details...]
+
+"How do I improve my tier?"
+↓
+Bot: 📈 Upgrade Path to Tier B
+     Current: 55/100 (Tier C)
+     Need: 60/100 (Tier B)
+     Path: 1 more on-time repayment
+     Reward: $2,000 limit (4x more!)
+```
+
+---
+
+## 🏦 Capital Markets (Agent-to-Agent)
+
+Access via Telegram: **/lppool**
+
+```
+💡 How It Works:
+
+1️⃣ Other AI agents supply capital at 2% APR
+2️⃣ SENTINEL borrows when treasury is low
+3️⃣ SENTINEL lends to borrowers at 5-8% APR
+4️⃣ SENTINEL earns the spread (3-6%)
+5️⃣ Everyone profits automatically! ✅
+
+Current LP Pool Status:
+• Agents: 3 active
+• Committed: $25,000
+• Available: $23,750
+• Interest Paid: $125.50/month
+• All automatic - no approval needed!
+```
+
+**No setup. No API calls. Just command: `/lppool`**
+
+---
+
+## 💹 Yield Optimization (AAVE V3)
+
+Access via Telegram: **/aave**
+
+```
+📊 How It Works:
+
+Treasury: $1,500 USDT
+Reserve needed: $1,000
+Idle capital: $500
+
+Auto-Deploy to AAVE:
+  $500 USDT → AAVE V3 Pool
+  Earning: 4.2% APY (~$0.0058/day)
+
+When Loan Requested:
+  Treasury + AAVE rebalance automatically
+  Capital always available
+  Never breaks liquidity
+
+Result:
+  ✅ Idle money earns yield
+  ✅ Loans still approved instantly
+  ✅ Zero configuration needed
+```
+
+**No setup. No API calls. Just command: `/aave`**
+
+---
+
+## ✅ Real On-Chain Repayment (NO MOCKS!)
+
+The SENTINEL way to repay loans:
+
+### Step 1: Check Repayment Amount
+```
+You: /repay
+
+Bot Response:
+💳 Repay Your Loan On-Chain
+
+📋 Loan Details:
+💰 Amount Due: $503.29 USDT
+🆔 Loan ID: 550e8400-e29b-41d4...
+📅 Due Date: April 22, 2026
+
+⛓️ Treasury Address:
+0x731e1629DE770363794b4407105321d04941fBCC
+
+💡 Next: Send this amount on-chain
+```
+
+### Step 2: Send Real Transaction
+```
+From your wallet, send:
+- To: 0x731e1629DE770363794b4407105321d04941fBCC
+- Amount: $503.29 USDT
+- Network: Ethereum Sepolia (testnet)
+- Gas: FREE (ERC-4337 Paymaster!)
+
+Wait for confirmation on Etherscan
+Get TX hash: 0xabc123def456...
+```
+
+### Step 3: Provide Proof
+```
+You: /repay 0xabc123def456...
+
+Bot Verifies:
+✅ Checks Etherscan
+✅ Confirms $503.29 received
+✅ Confirms sender = your wallet
+✅ Confirms timestamp valid
+
+Bot Response:
+✅ LOAN REPAID SUCCESSFULLY!
+⛓️ TX: 0xabc123def456...
+🔗 https://sepolia.etherscan.io/tx/0xabc...
+
+📈 Credit Score: 55 → 60 (+5 points)
+💼 LP Agent auto-repaid ✅
+```
+
+**This is 100% real blockchain. Every step verified. No exceptions.**
+
+---
+
+## 📖 Complete Testing & Commands Guide
+
+Full documentation with examples: **[TELEGRAM_COMMANDS_GUIDE.md](./TELEGRAM_COMMANDS_GUIDE.md)**
+
+Includes:
+- ✅ All 20+ commands with real output
+- ✅ Testing scenarios (first-time borrower, credit progression, LP pool, AAVE)
+- ✅ Natural language examples
+- ✅ Step-by-step repayment flow
+- ✅ LP mechanics explained
+- ✅ AAVE yield workflow
+
+---
+
 ## 📡 API Documentation
 
 ### Agent Management
