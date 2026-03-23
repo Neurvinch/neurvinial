@@ -30,45 +30,52 @@ coverage/
 dist/
 
 # ============================================
-# TEST FILES (development only)
+# TESTS FOLDER (development/e2e only)
 # ============================================
-test-*.js
-demo-flow.js
-final-hackathon-validation.js
-test-enhanced-openclaw.js
+tests/e2e/test-*.js
+tests/e2e/demo-flow.js
+tests/e2e/final-hackathon-validation.js
+tests/e2e/test-enhanced-openclaw.js
+tests/e2e/test-api.js
+tests/e2e/test-complete-flows.js
+tests/e2e/test-environment.js
+tests/e2e/test-lending-fix.js
+tests/e2e/test-local.js
+tests/e2e/test-telegram-complete-flow.js
+tests/e2e/test-whatsapp-complete-flow.js
 
 # ============================================
-# DOCUMENTATION (generated/temporary docs)
+# DOCS FOLDER (development/generated docs)
 # ============================================
-DEPLOY_NOW.md
-DYNAMIC_REQUEST_AND_BALANCE_FIXED.md
-HACKATHON_READY.md
-LIVE_TEST_RESULTS.md
-LOAN_PERSISTENCE_COMPLETE.md
-PROJECT_SUMMARY.md
-UPDATE_SUMMARY.md
-UX_IMPROVEMENTS_COMPLETE.md
-WHATSAPP_FIX_COMPLETE.md
-WHATSAPP_UX_IMPROVEMENTS.md
-TEACHING.md
-implemneted_plan.md
-test.md
+docs/DEPLOY_NOW.md
+docs/DYNAMIC_REQUEST_AND_BALANCE_FIXED.md
+docs/HACKATHON_READY.md
+docs/LIVE_TEST_RESULTS.md
+docs/LOAN_PERSISTENCE_COMPLETE.md
+docs/PROJECT_SUMMARY.md
+docs/UPDATE_SUMMARY.md
+docs/UX_IMPROVEMENTS_COMPLETE.md
+docs/WHATSAPP_FIX_COMPLETE.md
+docs/WHATSAPP_UX_IMPROVEMENTS.md
+docs/TEACHING.md
+docs/implemneted_plan.md
+docs/test.md
+docs/DEPLOY_NOW.md
+docs/FRONTEND_README.md
+docs/QUICKSTART.md
+docs/TELEGRAM_WEBHOOK_SETUP.md
+docs/TESTING_GUIDE.md
+docs/Sentinel_Project_Doc.md
+docs/DEMO_VIDEO_SCRIPT.md
+docs/ENHANCEMENT_SUMMARY.md
+docs/total_project.md
 
 # ============================================
-# DEPLOYMENT & CONFIG (local/CI-only)
+# DEPLOYMENT FOLDER (local/CI-only)
 # ============================================
-.railwayignore
-Procfile
-railway.json
-start-sentinel.ps1
-QUICK_START.sh
-START.sh
-
-# ============================================
-# NULL/EMPTY FILES (cleanup)
-# ============================================
-FRONTEND_README.md
-QUICKSTART.md
-TELEGRAM_WEBHOOK_SETUP.md
-TESTING_GUIDE.md
-Sentinel_Project_Doc.md
+deployment/.railwayignore
+deployment/Procfile
+deployment/railway.json
+deployment/start-neurvinial.ps1
+deployment/QUICK_START.sh
+deployment/START.sh
