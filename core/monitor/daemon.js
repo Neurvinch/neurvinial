@@ -6,6 +6,7 @@
 //   2. Send T-24h reminder alerts via Telegram
 //   3. Mark overdue loans as defaulted
 //   4. Trigger collateral liquidation for defaulted loans
+//   5. AUTONOMOUS on-chain repayment detection via WDK Indexer API
 //
 // Can be run standalone: node core/monitor/daemon.js
 // Or integrated into the main server via startMonitor()
@@ -16,6 +17,19 @@ const loanService = require('../loans/loanService');
 const { LOAN_STATUSES } = require('../utils/constants');
 const logger = require('../config/logger');
 const walletManager = require('../wdk/walletManager');
+
+// Import indexer service for on-chain data
+let indexerService = null;
+function getIndexerService() {
+  if (!indexerService) {
+    try {
+      indexerService = require('../wdk/indexerService');
+    } catch (e) {
+      logger.warn('Indexer service not available', { error: e.message });
+    }
+  }
+  return indexerService;
+}
 
 // Import telegram bot lazily (may not be configured yet)
 let telegramBot = null;
@@ -30,8 +44,23 @@ function getTelegramBot() {
   return telegramBot;
 }
 
+// Import WhatsApp channel for notifications
+let whatsappChannel = null;
+function getWhatsAppChannel() {
+  if (!whatsappChannel) {
+    try {
+      whatsappChannel = require('../channels/whatsappChannel');
+    } catch (e) {
+      // WhatsApp not configured - OK
+    }
+  }
+  return whatsappChannel;
+}
+
 // Track last checked balance to detect new incoming transfers
 let lastKnownBalance = null;
+// Track last check timestamp for indexer queries
+let lastIndexerCheck = null;
 
 // ============================================
 // Internal state (closure for singleton pattern)
@@ -60,6 +89,7 @@ function start(cronExpression = '* * * * *') {
   });
 
   state.isRunning = true;
+  lastIndexerCheck = new Date(Date.now() - 60 * 60 * 1000); // Start checking 1 hour back
   logger.info('Repayment monitor started', { schedule: cronExpression });
 }
 
@@ -92,6 +122,9 @@ async function checkAllLoans() {
 
   // Check for on-chain repayments FIRST (autonomous detection)
   await checkForRepayments(activeLoans);
+
+  // Also check via indexer for more robust detection
+  await checkRepaymentsViaIndexer(activeLoans);
 
   // Then check due dates and send alerts
   for (const loan of activeLoans) {
@@ -145,6 +178,71 @@ async function checkForRepayments(activeLoans) {
 }
 
 /**
+ * Check for repayments via WDK Indexer API.
+ * More robust detection by querying actual transaction history.
+ */
+async function checkRepaymentsViaIndexer(activeLoans) {
+  try {
+    const indexer = getIndexerService();
+    if (!indexer) {
+      return; // Indexer not available
+    }
+
+    if (!walletManager.isInitialized()) {
+      return; // WDK not ready
+    }
+
+    const treasuryAddress = await walletManager.getSentinelAddress();
+
+    for (const loan of activeLoans) {
+      // Get borrower's wallet address
+      const agent = await Agent.findOne({ did: loan.borrowerDid });
+      if (!agent || !agent.walletAddress) continue;
+
+      // Use indexer to detect repayment
+      const detection = await indexer.detectRepayment(
+        agent.walletAddress,
+        treasuryAddress,
+        loan.totalDue || loan.amount,
+        loan.disbursedAt || loan.createdAt
+      );
+
+      if (detection.detected) {
+        logger.info('Indexer detected on-chain repayment!', {
+          loanId: loan.loanId,
+          txHash: detection.txHash,
+          amount: detection.amount
+        });
+
+        try {
+          // Mark loan as repaid with the detected TX hash
+          const result = await loanService.markRepaid(loan.loanId, detection.txHash);
+
+          // Send notification via Telegram
+          await sendRepaymentNotification(loan, result, detection);
+
+          logger.info('Loan auto-repaid via indexer detection', {
+            loanId: loan.loanId,
+            txHash: detection.txHash
+          });
+        } catch (error) {
+          logger.error('Failed to process indexer-detected repayment', {
+            loanId: loan.loanId,
+            error: error.message
+          });
+        }
+      }
+    }
+
+    // Update last indexer check time
+    lastIndexerCheck = new Date();
+
+  } catch (error) {
+    logger.error('Indexer repayment check failed', { error: error.message });
+  }
+}
+
+/**
  * Match an incoming USDT transfer to outstanding loans.
  * Strategy: Find loan where totalDue ≈ transfer amount (within 1% tolerance)
  */
@@ -169,20 +267,8 @@ async function matchIncomingTransferToLoans(transferAmount, activeLoans) {
         // Mark loan as repaid (same as /repay command)
         const result = await loanService.markRepaid(loan.loanId);
 
-        // Send confirmation via Telegram
-        const bot = getTelegramBot();
-        if (bot) {
-          await bot.sendAlert(
-            `✅ **REPAYMENT DETECTED ON-CHAIN!**\n\n` +
-            `**Loan:** ${loan.loanId}\n` +
-            `**Borrower:** ${loan.borrowerDid}\n` +
-            `**Amount:** ${transferAmount.toFixed(2)} USDT\n` +
-            `**Status:** ${result.wasOnTime ? 'ON-TIME ⏰' : 'LATE ⚠️'}\n` +
-            `**Credit Score:** ${result.agent.creditScore} (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})\n` +
-            `**Tier:** ${result.agent.tier}\n\n` +
-            `🎉 Autonomous repayment detection working!`
-          );
-        }
+        // Send notification
+        await sendRepaymentNotification(loan, result, { amount: transferAmount });
 
         logger.info('Loan auto-repaid successfully', { loanId: loan.loanId });
 
@@ -195,6 +281,44 @@ async function matchIncomingTransferToLoans(transferAmount, activeLoans) {
           error: error.message
         });
       }
+    }
+  }
+}
+
+/**
+ * Send repayment notification via Telegram and WhatsApp.
+ */
+async function sendRepaymentNotification(loan, result, detection) {
+  const message = `✅ *REPAYMENT DETECTED ON-CHAIN!*
+
+💰 *Loan:* ${loan.loanId.substring(0, 16)}...
+👤 *Borrower:* ${loan.borrowerDid.substring(0, 25)}...
+💵 *Amount:* ${detection.amount?.toFixed(2) || loan.totalDue} USDT
+${detection.txHash ? `⛓️ *TX Hash:* ${detection.txHash.substring(0, 20)}...` : ''}
+⏰ *Status:* ${result.wasOnTime ? 'ON-TIME ✅' : 'LATE ⚠️'}
+📈 *Credit Score:* ${result.newCreditScore} (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})
+🏆 *Tier:* ${result.newTier}
+
+🎉 Autonomous repayment detection working!`;
+
+  // Send via Telegram
+  const bot = getTelegramBot();
+  if (bot && typeof bot.sendAlert === 'function') {
+    try {
+      await bot.sendAlert(message);
+    } catch (e) {
+      logger.warn('Telegram alert failed', { error: e.message });
+    }
+  }
+
+  // Also send via WhatsApp if borrower has a phone number
+  const whatsapp = getWhatsAppChannel();
+  if (whatsapp && loan.borrowerDid.includes('whatsapp:')) {
+    try {
+      const phoneNumber = loan.borrowerDid.replace('did:whatsapp:', '');
+      await whatsapp.sendWhatsAppMessage(phoneNumber, message.replace(/\*/g, ''));
+    } catch (e) {
+      logger.warn('WhatsApp notification failed', { error: e.message });
     }
   }
 }
