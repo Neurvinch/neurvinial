@@ -6,11 +6,13 @@
 //   Request → Score → Approve/Deny → Disburse → Repay/Default
 //
 // Every other module either feeds into or is called by this file.
+// Integrates LP Agent Manager for capital sourcing (FR-CP-02).
 
 const { v4: uuidv4 } = require('uuid');
 const { Loan, Agent, Transaction } = require('../models');
 const { calculateCreditScore } = require('../scoring/scoreEngine');
 const walletManager = require('../wdk/walletManager');
+const lpAgentManager = require('../capital/lpAgentManager');
 const { getTierFromScore } = require('../utils/tierCalculator');
 const { LOAN_STATUSES, SCORE_ADJUSTMENTS } = require('../utils/constants');
 const config = require('../config');
@@ -153,6 +155,7 @@ async function applyDecision(loan, agent, scoreResult) {
 // STEP 3: Disburse approved loan on-chain
 // =========================================================
 // Sends USDT from Sentinel's wallet to the borrower via WDK.
+// If treasury is low, requests capital from LP agents (FR-CP-02).
 async function disburseLoan(loanId) {
   const loan = await Loan.findOne({ loanId });
   if (!loan) {
@@ -167,6 +170,39 @@ async function disburseLoan(loanId) {
   }
 
   const agent = await Agent.findOne({ did: loan.borrowerDid });
+
+  // Check treasury balance
+  let lpCapitalUsed = null;
+  try {
+    const treasuryBalance = await walletManager.getSentinelUSDTBalance();
+
+    // If treasury is low, request capital from LP agents
+    if (treasuryBalance.balance < loan.amount) {
+      logger.info('Treasury low - requesting capital from LP pool', {
+        needed: loan.amount,
+        treasuryBalance: treasuryBalance.balance
+      });
+
+      const lpRequest = await lpAgentManager.requestCapitalFromLP(loan.amount);
+
+      if (lpRequest.success) {
+        // Store LP agent info on loan for repayment tracking
+        loan.lpAgentId = lpRequest.lpAgentId;
+        loan.lpApr = lpRequest.apr;
+        lpCapitalUsed = {
+          lpAgentId: lpRequest.lpAgentId,
+          amount: lpRequest.amount,
+          apr: lpRequest.apr
+        };
+        logger.info('LP capital secured for loan', lpCapitalUsed);
+      } else {
+        logger.warn('LP capital request failed', { reason: lpRequest.reason });
+        // Continue anyway - sendUSDT will throw if truly insufficient
+      }
+    }
+  } catch (balanceErr) {
+    logger.warn('Could not check treasury balance', { error: balanceErr.message });
+  }
 
   // Send USDT via WDK
   const { hash: txHash, fee } = await walletManager.sendUSDT(agent.walletAddress, loan.amount);
@@ -198,12 +234,13 @@ async function disburseLoan(loanId) {
   agent.lastActivity = new Date();
   await agent.save();
 
-  logger.info('Loan disbursed', { loanId, txHash, amount: loan.amount });
+  logger.info('Loan disbursed', { loanId, txHash, amount: loan.amount, lpCapitalUsed });
 
   return {
     loan: loan.toObject(),
     txHash,
-    fee
+    fee,
+    lpCapitalUsed
   };
 }
 
@@ -211,6 +248,7 @@ async function disburseLoan(loanId) {
 // STEP 4: Process repayment
 // =========================================================
 // Called when the borrower agent repays the loan.
+// If loan was funded by LP agent, repays them with interest.
 async function processRepayment(loanId, repaymentTxHash) {
   const loan = await Loan.findOne({ loanId });
   if (!loan) {
@@ -248,6 +286,25 @@ async function processRepayment(loanId, repaymentTxHash) {
   loan.repaidAt = new Date();
   await loan.save();
 
+  // If loan was funded by LP agent, repay them
+  let lpRepayment = null;
+  if (loan.lpAgentId) {
+    try {
+      lpRepayment = await lpAgentManager.repayLPAgent(
+        loan.lpAgentId,
+        loan.amount,
+        loan.interestAccrued || 0
+      );
+      logger.info('LP agent repaid', {
+        lpAgentId: loan.lpAgentId,
+        principalReturned: loan.amount,
+        lpInterestPaid: lpRepayment?.lpInterestPaid
+      });
+    } catch (lpErr) {
+      logger.error('LP repayment failed (non-blocking)', { error: lpErr.message });
+    }
+  }
+
   // Update agent credit profile
   const wasOnTime = new Date() <= loan.dueDate;
   agent.totalRepaid += 1;
@@ -267,7 +324,8 @@ async function processRepayment(loanId, repaymentTxHash) {
     loanId,
     onTime: wasOnTime,
     creditScoreChange: wasOnTime ? SCORE_ADJUSTMENTS.ON_TIME_REPAYMENT : SCORE_ADJUSTMENTS.LATE_REPAYMENT,
-    newScore: agent.creditScore
+    newScore: agent.creditScore,
+    lpRepayment: lpRepayment ? 'completed' : 'not_applicable'
   });
 
   return {
@@ -276,7 +334,8 @@ async function processRepayment(loanId, repaymentTxHash) {
     wasOnTime,
     creditScoreChange: wasOnTime ? SCORE_ADJUSTMENTS.ON_TIME_REPAYMENT : SCORE_ADJUSTMENTS.LATE_REPAYMENT,
     newCreditScore: agent.creditScore,
-    newTier: agent.tier
+    newTier: agent.tier,
+    lpRepayment
   };
 }
 
@@ -407,6 +466,14 @@ async function getAgentLoans(did) {
   return Loan.find({ borrowerDid: did }).sort({ createdAt: -1 }).lean();
 }
 
+// =========================================================
+// HELPER: Mark loan as repaid (alias for processRepayment)
+// =========================================================
+// Used by the repayment monitor daemon for autonomous detection.
+async function markRepaid(loanId, repaymentTxHash = null) {
+  return processRepayment(loanId, repaymentTxHash);
+}
+
 // Export as singleton object with all methods
 module.exports = {
   requestLoan,
@@ -414,6 +481,7 @@ module.exports = {
   disburseLoan,
   processRepayment,
   markDefault,
+  markRepaid, // Alias for daemon compatibility
   getLoanStatus,
   getAgentLoans
 };
