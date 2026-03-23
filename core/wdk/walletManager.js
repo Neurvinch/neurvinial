@@ -24,10 +24,9 @@ try {
 }
 
 // USDT contract addresses by network (REAL addresses)
-// NOTE: Sepolia uses USDC (Circle's testnet token) as it's more widely available
 const USDT_CONTRACTS = {
   mainnet: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-  sepolia: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // USDC on Sepolia (6 decimals)
+  sepolia: '0xd077a400968890eacc75cdc901f0356c943e4fdb', // Tether USD on Sepolia (100 tokens available)
   polygon: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
   arbitrum: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'
 };
@@ -229,14 +228,11 @@ async function createWalletForAgent(index) {
  * Send USDT to a recipient address.
  * This is the core on-chain operation for loan disbursement.
  *
- * NOTE: On Sepolia testnet, this sends USDC (Circle's testnet stablecoin)
- * as it's more widely available from faucets.
- *
  * MODE 1 - Traditional (if no 4337):
- *   User has ETH → Signs tx → Pays gas → Receives USDC
+ *   User has ETH → Signs tx → Pays gas → Receives USDT
  *
  * MODE 2 - 4337 Account Abstraction (if bundler + paymaster configured):
- *   User has NO ETH → Signs UserOperation → Bundler submits → Paymaster pays gas → Receives USDC
+ *   User has NO ETH → Signs UserOperation → Bundler submits → Paymaster pays gas → Receives USDT
  *
  * REAL TRANSACTION - requires either ETH (traditional) or Paymaster sponsorship (4337)
  */
@@ -244,17 +240,15 @@ async function sendUSDT(recipientAddress, amount) {
   requireInitialized();
 
   const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
-  const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT/USDC both have 6 decimals
-  const tokenSymbol = config.wdk.network === 'sepolia' ? 'USDC' : 'USDT';
+  const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT has 6 decimals
 
   const is4337Active = is4337Enabled();
 
-  logger.info('Initiating stablecoin transfer', {
+  logger.info('Initiating USDT transfer', {
     to: recipientAddress,
     amount,
     amountBaseUnits: amountInBaseUnits.toString(),
     token: usdtContract,
-    tokenSymbol,
     network: config.wdk.network,
     transferMode: is4337Active ? '4337-abstracted' : 'traditional',
     bundlerUrl: is4337Active ? config.wdk.bundlerUrl.substring(0, 40) + '...' : 'N/A',
