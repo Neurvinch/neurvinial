@@ -1,14 +1,14 @@
-# 🚀 SENTINEL - The Future of Autonomous Agent Finance
+# 🚀 Neurvinial - The Future of Autonomous Agent Finance
 
 <div align="center">
 
 ```ascii
- ███████╗███████╗███╗   ██╗████████╗██╗███╗   ██╗███████╗██╗
- ██╔════╝██╔════╝████╗  ██║╚══██╔══╝██║████╗  ██║██╔════╝██║
- ███████╗█████╗  ██╔██╗ ██║   ██║   ██║██╔██╗ ██║█████╗  ██║
- ╚════██║██╔══╝  ██║╚██╗██║   ██║   ██║██║╚██╗██║██╔══╝  ██║
- ███████║███████╗██║ ╚████║   ██║   ██║██║ ╚████║███████╗███████╗
- ╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝
+ ███╗   ██╗███████╗██╗   ██╗██████╗ ██╗   ██╗██╗███╗   ██╗██╗ █████╗ ██╗
+ ████╗  ██║██╔════╝██║   ██║██╔══██╗██║   ██║██║████╗  ██║██║██╔══██╗██║
+ ██╔██╗ ██║█████╗  ██║   ██║██████╔╝██║   ██║██║██╔██╗ ██║██║███████║██║
+ ██║╚██╗██║██╔══╝  ██║   ██║██╔══██╗╚██╗ ██╔╝██║██║╚██╗██║██║██╔══██║██║
+ ██║ ╚████║███████╗╚██████╔╝██║  ██║ ╚████╔╝ ██║██║ ╚████║██║██║  ██║███████╗
+ ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝  ╚═══╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═╝╚══════╝
               🤖 Autonomous AI Lending • Real USDT • OpenClaw Powered
 ```
 
@@ -45,7 +45,7 @@ You're looking at:
 
 ---
 
-## 💎 Why SENTINEL is Revolutionary
+## 💎 Why Neurvinial is Revolutionary
 
 <table>
 <tr>
@@ -63,7 +63,7 @@ You're looking at:
 </td>
 <td width="50%">
 
-### ⚡ **SENTINEL (This Project)**
+### ⚡ **Neurvinial (This Project)**
 - ✅ Natural language (`"I need 500 bucks"`)
 - ✅ **Real blockchain transactions**
 - ✅ **Agent-to-agent capital markets**
@@ -130,12 +130,12 @@ Everything you see is **verifiable on Ethereum Sepolia blockchain.**
 
 ## 🧠 The AI Brain: OpenClaw Natural Language
 
-**Most bots force you to learn commands. SENTINEL understands humans.**
+**Most bots force you to learn commands. Neurvinial understands humans.**
 
 ### Talk Like a Human, Not a Robot
 
 <table>
-<tr><th>❌ Old Way (Other Bots)</th><th>✅ SENTINEL Way</th></tr>
+<tr><th>❌ Old Way (Other Bots)</th><th>✅ Neurvinial Way</th></tr>
 <tr><td>
 
 ```
@@ -193,7 +193,7 @@ Everything you see is **verifiable on Ethereum Sepolia blockchain.**
 
 ## 🏦 Agent-to-Agent Economy (Game Changer)
 
-**SENTINEL doesn't just lend to humans - it participates in an autonomous agent economy!**
+**Neurvinial doesn't just lend to humans - it participates in an autonomous agent economy!**
 
 ### The LP Agent Pool (FR-CP-02 ✅)
 
@@ -209,7 +209,7 @@ Everything you see is **verifiable on Ethereum Sepolia blockchain.**
                                │
                                ▼
                     ┌──────────────────────┐
-                    │   🏦 SENTINEL Pool   │
+                    │   🏦 Neurvinial Pool   │
                     │   $25,000 Available  │
                     └──────────────────────┘
                                │
@@ -220,7 +220,7 @@ Everything you see is **verifiable on Ethereum Sepolia blockchain.**
             $2,000         $1,500        $500
             @ 5% APR       @ 8% APR      @ 8% APR
 
-         💰 SENTINEL EARNS: 3-6% SPREAD (Fully Autonomous!)
+         💰 Neurvinial EARNS: 3-6% SPREAD (Fully Autonomous!)
 ```
 
 ### How It Works (Zero Human Intervention)
@@ -230,19 +230,19 @@ Everything you see is **verifiable on Ethereum Sepolia blockchain.**
 // 1. Borrower requests $2,000 loan
 POST /loans/request { amount: 2000 }
 
-// 2. SENTINEL checks treasury
+// 2. Neurvinial checks treasury
 Treasury Balance: $500 USDT (insufficient!)
 
-// 3. SENTINEL automatically requests capital from LP Agent Pool
+// 3. Neurvinial automatically requests capital from LP Agent Pool
 → LP Agent A supplies $2,000 at 2% APR
 
-// 4. SENTINEL disburses to borrower at 5% APR
+// 4. Neurvinial disburses to borrower at 5% APR
 → Borrower receives $2,000 USDT on-chain
 
 // 5. Borrower repays $2,060 after 30 days
-→ SENTINEL detects repayment (autonomous!)
+→ Neurvinial detects repayment (autonomous!)
 → LP Agent A receives $2,016 (principal + 2% APR)
-→ SENTINEL keeps $44 profit (3% spread)
+→ Neurvinial keeps $44 profit (3% spread)
 
 ✅ Everyone profits. Zero manual steps. Fully on-chain.
 ```
@@ -273,7 +273,7 @@ You'll see:
 
 ```
 ┌────────────────────────────────────────────────────┐
-│              🏦 SENTINEL TREASURY                  │
+│              🏦 Neurvinial TREASURY                  │
 │              Balance: $5,000 USDT                  │
 └────────────────────────────────────────────────────┘
                         │
@@ -337,7 +337,7 @@ curl https://neurvinial.onrender.com/capital/aave/status
 ❌ Result: Users can lie, no blockchain proof
 ```
 
-### SENTINEL's Solution
+### Neurvinial's Solution
 
 ```
 ✅ User: Sends USDT to treasury (on Ethereum)
@@ -428,7 +428,7 @@ https://t.me/neurvinial_bot
 ### **Option 2: WhatsApp** (Same Features!)
 
 ```bash
-# Step 1: Message SENTINEL on WhatsApp
+# Step 1: Message Neurvinial on WhatsApp
 Save: [Your WhatsApp Number]
 
 # Step 2: Send
@@ -689,7 +689,7 @@ curl https://neurvinial.onrender.com/health
 ## 🎓 Credit Scoring System (ML + LLM Hybrid)
 
 **Most bots: Random scoring or no credit system**
-**SENTINEL: Sophisticated dual-layer ML + LLM scoring**
+**Neurvinial: Sophisticated dual-layer ML + LLM scoring**
 
 ### The Hybrid Approach
 
@@ -824,17 +824,17 @@ else tier = 'D';
 🤖 Bob (Liquidity Provider Agent)
 └─► Registers as LP: POST /capital/lp/register
     └─► Commits: $10,000 @ 2% APR
-        └─► SENTINEL borrows: $2,000 when treasury low
-            └─► SENTINEL lends: $2,000 @ 5% APR to borrower
+        └─► Neurvinial borrows: $2,000 when treasury low
+            └─► Neurvinial lends: $2,000 @ 5% APR to borrower
                 └─► Borrower repays: $2,060 after 30 days
                     └─► Bob receives: $2,016 (principal + $16 interest)
-                        └─► SENTINEL keeps: $44 profit (3% spread)
+                        └─► Neurvinial keeps: $44 profit (3% spread)
                             └─► Everyone wins! 🎉
 ```
 
 ### **Use Case 3: Yield Optimization**
 ```
-🏦 SENTINEL Treasury
+🏦 Neurvinial Treasury
 └─► Has: $5,000 USDT
     └─► Active loans: $3,500 (earning 5-8% APR)
         └─► Idle capital: $1,500 (doing nothing?)
@@ -857,7 +857,7 @@ else tier = 'D';
 ❌ No verification, no blockchain check
 ```
 
-**SENTINEL autonomous:**
+**Neurvinial autonomous:**
 ```
 ✅ User sends USDT on-chain
 ✅ Monitor detects balance change (60s polling)
@@ -872,9 +872,9 @@ else tier = 'D';
 
 **Most projects: Single wallet lends to users**
 
-**SENTINEL: Multi-agent autonomous economy**
+**Neurvinial: Multi-agent autonomous economy**
 ```
-LP Agents ↔ SENTINEL ↔ Borrower Agents
+LP Agents ↔ Neurvinial ↔ Borrower Agents
     ↓           ↓           ↓
   2% APR    3-6% spread  5-8% APR
 
@@ -885,7 +885,7 @@ Everyone profits automatically!
 
 **Most bots: Idle treasury sits unused**
 
-**SENTINEL:**
+**Neurvinial:**
 ```
 Active Loans: Earning 5-8% APR
 Idle Capital: Earning 4.2% APY on AAVE
@@ -896,7 +896,7 @@ Result: 100% utilization, always working!
 
 **Most bots:** `/request 500` `/approve` `/repay`
 
-**SENTINEL:**
+**Neurvinial:**
 - "I need 500 bucks" ✅
 - "what can I borrow?" ✅
 - "show me my score" ✅
@@ -908,7 +908,7 @@ Result: 100% utilization, always working!
 **Zero gas fees for users!**
 ```
 Traditional: User needs ETH → Signs TX → Pays $2-5 gas
-SENTINEL: User needs ZERO ETH → Signs UserOp → Paymaster pays gas
+Neurvinial: User needs ZERO ETH → Signs UserOp → Paymaster pays gas
 ```
 
 ---
@@ -944,7 +944,7 @@ nano .env
 
 ```bash
 # MongoDB
-MONGODB_URI=mongodb://localhost:27017/sentinel
+MONGODB_URI=mongodb://localhost:27017/neurvinial
 
 # Telegram
 TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
@@ -1223,7 +1223,7 @@ GET /stats
 Total: ~30 minutes, ~$40 in gas
 ```
 
-### **⚡ SENTINEL Experience:**
+### **⚡ Neurvinial Experience:**
 ```
 1. Open Telegram
 2. Type: "I need 500 bucks"
@@ -1236,7 +1236,7 @@ Total: ~30 minutes, ~$40 in gas
 Total: 90 seconds, $0 in gas
 ```
 
-**THAT'S the revolution. That's why SENTINEL wins.**
+**THAT'S the revolution. That's why Neurvinial wins.**
 
 ---
 
@@ -1376,7 +1376,7 @@ Talk to it like a human. It understands context, extracts amounts, and provides 
 Set it up once. It runs 24/7. Detects repayments. Manages capital. Optimizes yield. Zero human intervention.
 
 ### 4️⃣ **It's an Economy**
-Not just borrower-to-bot. It's agent-to-agent. LP agents supply capital. SENTINEL earns spreads. Everyone profits.
+Not just borrower-to-bot. It's agent-to-agent. LP agents supply capital. Neurvinial earns spreads. Everyone profits.
 
 ### 5️⃣ **It's Production-Ready**
 Zero mocks. Real MongoDB. Real blockchain. Real APIs. Real error handling. This could launch tomorrow.
@@ -1399,7 +1399,7 @@ This is what autonomous agent finance looks like. No humans. No clicks. Just age
 
 ### vs. Existing DeFi Platforms
 
-| Feature | Aave | Compound | **SENTINEL** |
+| Feature | Aave | Compound | **Neurvinial** |
 |---------|------|----------|--------------|
 | Collateral Required | 150%+ | 125%+ | **0-50% (tier-based)** |
 | Gas Fees | $5-20 | $5-20 | **$0 (ERC-4337)** |
@@ -1411,7 +1411,7 @@ This is what autonomous agent finance looks like. No humans. No clicks. Just age
 
 ### vs. Other Hackathon Projects
 
-| Criteria | Most Submissions | **SENTINEL** |
+| Criteria | Most Submissions | **Neurvinial** |
 |----------|------------------|--------------|
 | **Real Transactions** | Mock/Simulation | ✅ **100% Real** |
 | **Lines of Code** | 500-2000 | ✅ **8,000+** |
@@ -1434,9 +1434,10 @@ This is what autonomous agent finance looks like. No humans. No clicks. Just age
 │                                             │
 │ 👤 You: hi                                  │
 │                                             │
-│ 🤖 Bot: Hey! I'm Sentinel, your autonomous │
-│         lending agent. Need cash? Try       │
-│         /request 300 for instant USDT!      │
+│ 🤖 Bot: Hey! I'm Neurvinial, your          │
+│         autonomous lending agent. Need     │
+│         cash? Try /request 300 for instant │
+│         USDT!                               │
 │                                             │
 │ 👤 You: I need 500 bucks                    │
 │                                             │
@@ -1607,9 +1608,9 @@ MIT License - See LICENSE file
 ```
 ┌────────────────────────────────────────────────────────────┐
 │  "The future of finance is autonomous, intelligent, and    │
-│   agent-driven. SENTINEL is that future, built today."     │
+│   agent-driven. Neurvinial is that future, built today."     │
 │                                                            │
-│                        - SENTINEL Team                      │
+│                        - Neurvinial Team                      │
 └────────────────────────────────────────────────────────────┘
 ```
 
