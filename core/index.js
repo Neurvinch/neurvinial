@@ -58,6 +58,17 @@ app.use(rateLimit({
 
 // ---- Health Check ----
 app.get('/health', async (req, res) => {
+  // Determine telegram status dynamically
+  let telegramStatus = 'disabled';
+  if (config.telegram?.botToken) {
+    try {
+      const botInfo = await telegramChannel.getBotInfo();
+      telegramStatus = botInfo ? 'active' : 'error';
+    } catch {
+      telegramStatus = 'active'; // Bot is initialized but couldn't get info
+    }
+  }
+
   res.json({
     status: 'ok',
     service: 'sentinel',
@@ -68,7 +79,7 @@ app.get('/health', async (req, res) => {
       wdk: walletManager.isInitialized() ? 'initialized' : 'not_initialized',
       accountAbstraction: walletManager.is4337Enabled() ? 'enabled' : 'disabled',
       openclaw: 'initialized',
-      telegram: 'disabled',
+      telegram: telegramStatus,
       whatsapp: !!process.env.TWILIO_ACCOUNT_SID ? 'active' : 'disabled'
     }
   });
@@ -156,6 +167,21 @@ async function start() {
 
     if (port !== config.server.port) {
       logger.warn(`Note: Started on port ${port} (port ${config.server.port} was busy). Update your frontend API base URL if needed.`);
+    }
+
+    // Set up Telegram webhook for production (so bot works 24/7)
+    if (config.server.env === 'production' && config.telegram?.botToken) {
+      try {
+        const serverUrl = process.env.RENDER_EXTERNAL_URL || `https://neurvinial.onrender.com`;
+        const webhookResult = await telegramChannel.setupTelegramWebhook(serverUrl);
+        if (webhookResult) {
+          logger.info('Telegram webhook configured for 24/7 operation', {
+            webhookUrl: `${serverUrl}/channels/telegram/webhook`
+          });
+        }
+      } catch (webhookErr) {
+        logger.error('Failed to setup Telegram webhook', { error: webhookErr.message });
+      }
     }
   } catch (err) {
     logger.error('Startup failed', { error: err.message });

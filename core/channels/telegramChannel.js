@@ -1037,12 +1037,92 @@ function stopTelegram() {
   }
 }
 
+/**
+ * Set up Telegram webhook for production deployment.
+ * This MUST be called after the server starts to register the webhook URL with Telegram.
+ * Without this, the bot will NOT receive messages in production!
+ */
+async function setupTelegramWebhook(serverUrl) {
+  if (!bot || !BOT_TOKEN) {
+    logger.warn('Cannot setup webhook - bot not configured');
+    return false;
+  }
+
+  // Only setup webhook in production
+  if (!IS_PRODUCTION) {
+    logger.info('Skipping webhook setup in development (using polling mode)');
+    return true;
+  }
+
+  const webhookUrl = `${serverUrl}/channels/telegram/webhook`;
+
+  try {
+    // First, delete any existing webhook
+    await bot.deleteWebHook();
+    logger.info('Cleared existing Telegram webhook');
+
+    // Set the new webhook
+    const result = await bot.setWebHook(webhookUrl, {
+      drop_pending_updates: true // Don't process old messages
+    });
+
+    if (result) {
+      logger.info('✅ Telegram webhook set successfully', { webhookUrl });
+
+      // Verify webhook info
+      const webhookInfo = await bot.getWebHookInfo();
+      logger.info('Telegram webhook info', {
+        url: webhookInfo.url,
+        has_custom_certificate: webhookInfo.has_custom_certificate,
+        pending_update_count: webhookInfo.pending_update_count,
+        last_error_date: webhookInfo.last_error_date,
+        last_error_message: webhookInfo.last_error_message
+      });
+
+      return true;
+    } else {
+      logger.error('Failed to set Telegram webhook');
+      return false;
+    }
+  } catch (error) {
+    logger.error('Telegram webhook setup failed', {
+      error: error.message,
+      webhookUrl
+    });
+    return false;
+  }
+}
+
+/**
+ * Get bot info to verify it's working
+ */
+async function getBotInfo() {
+  if (!bot) return null;
+
+  try {
+    const info = await bot.getMe();
+    return {
+      id: info.id,
+      username: info.username,
+      first_name: info.first_name,
+      can_join_groups: info.can_join_groups,
+      can_read_all_group_messages: info.can_read_all_group_messages
+    };
+  } catch (error) {
+    logger.error('Failed to get bot info', { error: error.message });
+    return null;
+  }
+}
+
 // Export functions
 module.exports = {
   bot,
   initializeTelegram,
   stopTelegram,
+  setupTelegramWebhook,
+  getBotInfo,
   handleTelegramWebhook,
   handleMessage,
-  getUserContext
+  getUserContext,
+  IS_PRODUCTION
 };

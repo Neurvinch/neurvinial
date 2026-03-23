@@ -259,37 +259,16 @@ async function sendUSDT(recipientAddress, amount) {
     // Check if we have sufficient USDT balance first
     const treasuryBalance = await getSentinelUSDTBalance();
 
-    if (treasuryBalance.balance < amount && config.wdk.network === 'sepolia') {
-      // For Sepolia testnet, simulate the transaction for demo purposes
-      logger.warn('Treasury insufficient USDT - using demo simulation for Sepolia testnet', {
+    if (treasuryBalance.balance < amount) {
+      // REAL ERROR - Treasury needs funding
+      const errorMsg = `Treasury insufficient USDT: need ${amount} USDT but only have ${treasuryBalance.balance.toFixed(2)} USDT. Fund the treasury wallet with Sepolia USDT to enable real transfers.`;
+      logger.error('USDT transfer BLOCKED - Treasury needs funding', {
         needed: amount,
         available: treasuryBalance.balance,
-        network: config.wdk.network
+        network: config.wdk.network,
+        treasuryAddress: await getSentinelAddress()
       });
-
-      // Generate a realistic demo transaction hash
-      const demoTxHash = `0x${Math.random().toString(16).substr(2, 8)}${Date.now().toString(16)}${Math.random().toString(16).substr(2, 32)}`.padEnd(66, '0');
-
-      // Simulate transaction delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      logger.info('USDT transfer SIMULATED (testnet demo)', {
-        to: recipientAddress,
-        amount,
-        txHash: demoTxHash,
-        fee: '0',
-        transferMode: is4337Active ? '4337-abstracted' : 'traditional',
-        gasSponsored: is4337Active ? 'paymaster' : 'sender',
-        note: 'Sepolia testnet simulation - no real USDT moved'
-      });
-
-      return {
-        hash: demoTxHash,
-        fee: '0',
-        mode: is4337Active ? '4337' : 'traditional',
-        simulated: true,
-        network: config.wdk.network
-      };
+      throw new Error(errorMsg);
     }
 
     // Real transfer for mainnet or when treasury has sufficient balance
