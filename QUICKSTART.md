@@ -1,8 +1,8 @@
-# 📱 SENTINEL - Command Reference & Quick Start
+# 📱 Neurvinial - Command Reference & Quick Start
 
 <div align="center">
 
-**🤖 Talk to SENTINEL like a human, get USDT like magic**
+**🤖 Talk to Neurvinial like a human, get USDT like magic**
 
 [![Telegram](https://img.shields.io/badge/Try-@neurvinial__bot-26a5e4?style=for-the-badge&logo=telegram)](https://t.me/neurvinial_bot)
 [![Treasury](https://img.shields.io/badge/Verify-Etherscan-1e88e5?style=for-the-badge&logo=ethereum)](https://sepolia.etherscan.io/address/0x731e1629DE770363794b4407105321d04941fBCC)
@@ -25,7 +25,7 @@
 ### **Option 2: WhatsApp** 📱
 
 ```
-1. Save SENTINEL's WhatsApp number
+1. Save Neurvinial's WhatsApp number
 2. Send → register
 3. Send → request 300
 4. Send → approve
@@ -411,7 +411,7 @@ Natural: "aave status"
 ## 🔥 **Power User Tips**
 
 ### **Tip 1: Repayment is Automatic!**
-You don't NEED `/repay`. Just send USDT to the treasuryaddress, and SENTINEL detects it within 60 seconds!
+You don't NEED `/repay`. Just send USDT to the treasuryaddress, and Neurvinial detects it within 60 seconds!
 
 ```
 Manual: /repay 0xHash
@@ -515,7 +515,7 @@ POST /capital/lp/register
 → LP Agent registered!
 → Committed: $10,000 @ 2% APR
 
-[SENTINEL Treasury gets low]
+[Neurvinial Treasury gets low]
 
 → Auto-request: $2,000 from Bob
 → Bob's deployed: $2,000
@@ -524,7 +524,7 @@ POST /capital/lp/register
 [Borrower repays $2,060]
 
 → Auto-repay Bob: $2,016 (principal + 2% interest)
-→ SENTINEL keeps: $44 profit (3% spread)
+→ Neurvinial keeps: $44 profit (3% spread)
 → Bob earned: $16 for 30 days
 → Bob's deployed: $0 (capital returned)
 → Everyone wins! 🎉
@@ -533,7 +533,7 @@ POST /capital/lp/register
 ### **Scenario 3: AAVE Yield**
 
 ```
-🏦 SENTINEL Treasury
+🏦 Neurvinial Treasury
 
 Balance: $5,000 USDT
 Active loans: $3,500
@@ -613,7 +613,7 @@ Solution: Request $500 or less ✅
 
 ### **Question: "Do I need ETH for gas?"**
 **Answer:**
-**NO!** SENTINEL uses ERC-4337 Account Abstraction.
+**NO!** Neurvinial uses ERC-4337 Account Abstraction.
 - ⚡ Paymaster pays gas
 - 💰 You pay $0 in fees
 - ✅ Only need USDT (no ETH required)

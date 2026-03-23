@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — WDK Wallet Manager (REAL IMPLEMENTATION)
+// Neurvinial — WDK Wallet Manager (REAL IMPLEMENTATION)
 // ============================================
 // Singleton that wraps the Tether WDK SDK.
 // Handles: wallet init, account creation, USDT transfers, balance checks.
