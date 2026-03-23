@@ -24,9 +24,10 @@ try {
 }
 
 // USDT contract addresses by network (REAL addresses)
+// NOTE: Sepolia uses USDC (Circle's testnet token) as it's more widely available
 const USDT_CONTRACTS = {
   mainnet: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-  sepolia: '0x7169D38820dfd117C3FA1f22a697dBA58d90BA06',
+  sepolia: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // USDC on Sepolia (6 decimals)
   polygon: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
   arbitrum: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'
 };
@@ -228,11 +229,14 @@ async function createWalletForAgent(index) {
  * Send USDT to a recipient address.
  * This is the core on-chain operation for loan disbursement.
  *
+ * NOTE: On Sepolia testnet, this sends USDC (Circle's testnet stablecoin)
+ * as it's more widely available from faucets.
+ *
  * MODE 1 - Traditional (if no 4337):
- *   User has ETH → Signs tx → Pays gas → Receives USDT
+ *   User has ETH → Signs tx → Pays gas → Receives USDC
  *
  * MODE 2 - 4337 Account Abstraction (if bundler + paymaster configured):
- *   User has NO ETH → Signs UserOperation → Bundler submits → Paymaster pays gas → Receives USDT
+ *   User has NO ETH → Signs UserOperation → Bundler submits → Paymaster pays gas → Receives USDC
  *
  * REAL TRANSACTION - requires either ETH (traditional) or Paymaster sponsorship (4337)
  */
@@ -240,15 +244,17 @@ async function sendUSDT(recipientAddress, amount) {
   requireInitialized();
 
   const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
-  const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT has 6 decimals
+  const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT/USDC both have 6 decimals
+  const tokenSymbol = config.wdk.network === 'sepolia' ? 'USDC' : 'USDT';
 
   const is4337Active = is4337Enabled();
 
-  logger.info('Initiating USDT transfer', {
+  logger.info('Initiating stablecoin transfer', {
     to: recipientAddress,
     amount,
     amountBaseUnits: amountInBaseUnits.toString(),
     token: usdtContract,
+    tokenSymbol,
     network: config.wdk.network,
     transferMode: is4337Active ? '4337-abstracted' : 'traditional',
     bundlerUrl: is4337Active ? config.wdk.bundlerUrl.substring(0, 40) + '...' : 'N/A',
@@ -261,10 +267,11 @@ async function sendUSDT(recipientAddress, amount) {
 
     if (treasuryBalance.balance < amount) {
       // REAL ERROR - Treasury needs funding
-      const errorMsg = `Treasury insufficient USDT: need ${amount} USDT but only have ${treasuryBalance.balance.toFixed(2)} USDT. Fund the treasury wallet with Sepolia USDT to enable real transfers.`;
-      logger.error('USDT transfer BLOCKED - Treasury needs funding', {
+      const errorMsg = `Treasury insufficient ${tokenSymbol}: need ${amount} ${tokenSymbol} but only have ${treasuryBalance.balance.toFixed(2)} ${tokenSymbol}. Fund the treasury wallet to enable real transfers.`;
+      logger.error('Transfer BLOCKED - Treasury needs funding', {
         needed: amount,
         available: treasuryBalance.balance,
+        tokenSymbol,
         network: config.wdk.network,
         treasuryAddress: await getSentinelAddress()
       });
@@ -278,9 +285,10 @@ async function sendUSDT(recipientAddress, amount) {
       amount: amountInBaseUnits
     });
 
-    logger.info('USDT transfer CONFIRMED', {
+    logger.info('Stablecoin transfer CONFIRMED', {
       to: recipientAddress,
       amount,
+      tokenSymbol,
       txHash: result.hash,
       fee: result.fee?.toString(),
       transferMode: is4337Active ? '4337-abstracted' : 'traditional',
@@ -294,18 +302,20 @@ async function sendUSDT(recipientAddress, amount) {
       simulated: false
     };
   } catch (err) {
-    logger.error('USDT transfer FAILED', {
+    logger.error('Stablecoin transfer FAILED', {
       to: recipientAddress,
       amount,
+      tokenSymbol,
       error: err.message,
       transferMode: is4337Active ? '4337-abstracted' : 'traditional'
     });
-    throw new Error(`USDT transfer failed: ${err.message}`);
+    throw new Error(`${tokenSymbol} transfer failed: ${err.message}`);
   }
 }
 
 /**
- * Check USDT balance for any address.
+ * Check stablecoin balance for any address.
+ * Returns USDT on mainnet/polygon/arbitrum, USDC on Sepolia.
  */
 async function getUSDTBalance(address) {
   requireInitialized();
@@ -319,7 +329,7 @@ async function getUSDTBalance(address) {
     });
 
     const rawBalance = await readOnly.getTokenBalance(usdtContract);
-    const balance = Number(rawBalance) / 1e6; // USDT has 6 decimals
+    const balance = Number(rawBalance) / 1e6; // USDT/USDC both have 6 decimals
 
     return { balance, raw: rawBalance.toString() };
   } catch (err) {
@@ -345,7 +355,7 @@ async function getSentinelETHBalance() {
 }
 
 /**
- * Get Sentinel's USDT balance.
+ * Get Sentinel's stablecoin balance (USDT on mainnet, USDC on Sepolia).
  */
 async function getSentinelUSDTBalance() {
   requireInitialized();
