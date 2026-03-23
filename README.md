@@ -486,6 +486,62 @@ Bot: 📈 Upgrade Path to Tier B
 
 ---
 
+## 📱 WhatsApp Bot Commands
+
+**Multi-Channel Support:** SENTINEL supports both Telegram and WhatsApp with identical functionality!
+
+### WhatsApp Quick Start
+
+```
+1. Save SENTINEL's WhatsApp number
+2. Send: "register"
+3. Send: "request 300"
+4. Send: "approve"
+5. Get: Real Etherscan TX hash ✅
+```
+
+### All WhatsApp Commands
+
+| Command | Aliases | What It Does |
+|---------|---------|--------------|
+| **Account** |||
+| `register` | `start` | Create account + WDK wallet |
+| `status` | `score`, `credit` | Your credit profile |
+| `wallet` | `address` | Your wallet address |
+| `balance` | `portfolio` | Loan summary |
+| `help` | `?`, `menu` | All commands |
+| **Loans** |||
+| `request 500` | `loan 500`, `borrow 500` | Request $500 loan |
+| `approve` | `disburse`, `confirm` | Disburse pending loan |
+| `repay 0xHash` | `pay` | Repay with TX proof |
+| `history` | `past` | Loan history |
+| `loans` | `dashboard` | Loan dashboard |
+| `limit` | `max`, `how much` | Your max amount |
+| `terms` | `rates`, `apr` | Interest rates |
+| **Credit** |||
+| `tiers` | `levels` | All credit tiers |
+| `upgrade` | `improve`, `tips` | Score improvement tips |
+| **Capital** |||
+| `capital` | `funds` | Treasury overview |
+| `lppool` | `lp`, `liquidity` | LP Agent pool info |
+| `aave` | `yield`, `defi` | AAVE yield status |
+| `treasury` | `vault` | Treasury address |
+| **System** |||
+| `health` | `system`, `ping` | System health check |
+
+### WhatsApp Natural Language
+
+Just like Telegram, WhatsApp understands natural language:
+
+```
+"I need 500 bucks" → Processes $500 loan request
+"What's my score?" → Shows credit profile
+"How do I improve?" → Upgrade tips
+"Show me the LP pool" → LP Agent details
+```
+
+---
+
 ## 🏦 Capital Markets (Agent-to-Agent)
 
 Access via Telegram: **/lppool**
@@ -538,6 +594,65 @@ Result:
 ```
 
 **No setup. No API calls. Just command: `/aave`**
+
+---
+
+## 🔍 Autonomous On-Chain Detection
+
+SENTINEL monitors the blockchain 24/7 for automatic repayment detection!
+
+### How It Works
+
+```
+📡 Repayment Monitor Daemon
+├── Runs every 60 seconds
+├── Checks treasury balance changes
+├── Queries WDK Indexer API for transactions
+└── Matches incoming transfers to loans
+
+🔄 Detection Flow:
+1. Borrower sends USDT to treasury address
+2. SENTINEL detects balance increase
+3. Matches amount to outstanding loan
+4. Auto-marks loan as REPAID
+5. Updates credit score automatically
+6. Sends notification to borrower
+
+No /repay command needed!
+```
+
+### WDK Indexer Integration
+
+```javascript
+// Real on-chain data via WDK Indexer API
+const indexer = require('./core/wdk/indexerService');
+
+// Get transaction history
+const transfers = await indexer.getTokenTransfers(address, {
+  chain: 'ethereum-sepolia',
+  token: 'usdt',
+  limit: 100
+});
+
+// Detect repayment
+const detection = await indexer.detectRepayment(
+  borrowerAddress,
+  treasuryAddress,
+  expectedAmount
+);
+
+// Extract credit features from on-chain history
+const features = await indexer.extractCreditFeatures(address);
+```
+
+### SRD Compliance
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| **FR-ID-03** | ✅ | Transaction history via WDK Indexer |
+| **FR-MN-01** | ✅ | Monitor daemon polls every 60s |
+| **FR-MN-02** | ✅ | T-24h Telegram + WhatsApp alerts |
+| **FR-MN-03** | ✅ | 12-hour grace period before default |
 
 ---
 
