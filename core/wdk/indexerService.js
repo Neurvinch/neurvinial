@@ -18,8 +18,8 @@ const config = require('../config');
 // ============================================
 // Configuration
 // ============================================
-const INDEXER_BASE_URL = process.env.WDK_INDEXER_URL || 'https://wdk-api.tether.io';
-const INDEXER_API_KEY = process.env.WDK_INDEXER_API_KEY || '';
+const INDEXER_BASE_URL = 'https://wdk-api.tether.io'
+const INDEXER_API_KEY = 'c237be9d1b355ffac7a3eaf0442ff49643aac565b7217992aa50b60fc30c5ab7';
 
 // Chain identifiers
 const CHAIN_IDS = {
