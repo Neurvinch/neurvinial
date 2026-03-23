@@ -4,18 +4,21 @@
 // Manages Sentinel's treasury / lending pool:
 //   - Tracks deployed capital vs. idle capital
 //   - Reports capital status for the /capital/status endpoint
-//   - Yield deployment ready for WDK lending protocol when available
+//   - Integrates LP Agent pool (FR-CP-02)
+//   - Integrates AAVE for yield deployment (FR-CP-01)
 //
-// Note: Yield reallocation requires @tetherto/wdk-lending module.
+// NO MOCKS - Uses real WDK and MongoDB only.
 
 const { Loan, Transaction } = require('../models');
 const walletManager = require('../wdk/walletManager');
+const lpAgentManager = require('../capital/lpAgentManager');
+const aaveIntegration = require('../capital/aaveIntegration');
 const { LOAN_STATUSES } = require('../utils/constants');
 const config = require('../config');
 const logger = require('../config/logger');
 
 /**
- * Get current capital status: reserves, deployed, and yield.
+ * Get current capital status: reserves, deployed, LP pool, and AAVE yield.
  */
 async function getCapitalStatus() {
   // Get Sentinel's USDT balance
@@ -41,8 +44,17 @@ async function getCapitalStatus() {
   });
   const totalDefaultedAmount = defaultedLoans.reduce((sum, loan) => sum + loan.amount, 0);
 
-  // Idle capital = USDT on hand minus enough reserve
+  // Get LP pool status
+  const lpPoolStats = lpAgentManager.getLPPoolStats();
+
+  // Get AAVE status
+  const aaveStatus = await aaveIntegration.getAaveStatus();
+
+  // Idle capital = USDT on hand minus reserve threshold
   const idleCapital = Math.max(0, usdtBalance - config.loan.idleThreshold);
+
+  // Check if AAVE deployment is recommended
+  const aaveRecommendation = aaveIntegration.shouldDeployToAave(idleCapital);
 
   const status = {
     sentinelAddress,
@@ -63,10 +75,25 @@ async function getCapitalStatus() {
       capitalLost: totalDefaultedAmount,
       netPnL: parseFloat((totalInterestEarned - totalDefaultedAmount).toFixed(2))
     },
+    lpPool: {
+      activeLPAgents: lpPoolStats.activeLPAgents,
+      totalCapitalCommitted: lpPoolStats.totalCapitalCommitted,
+      totalCapitalDeployed: lpPoolStats.totalCapitalDeployed,
+      totalCapitalAvailable: lpPoolStats.totalCapitalAvailable,
+      averageAPR: (lpPoolStats.averageAPR * 100).toFixed(2) + '%',
+      totalInterestPaidToLPs: lpPoolStats.totalInterestPaidToLPs
+    },
+    aave: {
+      currentDeposit: aaveStatus.currentDeposit,
+      interestEarned: aaveStatus.interestEarned,
+      estimatedAPY: aaveStatus.estimatedAPY + '%',
+      status: aaveStatus.status
+    },
     reallocation: {
       idleCapital,
       idleThreshold: config.loan.idleThreshold,
-      yieldOpportunities: getYieldOpportunities(idleCapital)
+      aaveRecommendation,
+      yieldOpportunities: await aaveIntegration.getYieldOpportunities()
     }
   };
 
@@ -75,40 +102,45 @@ async function getCapitalStatus() {
 
 /**
  * Get available yield opportunities for idle capital.
- * Queries DeFi protocol rates via WDK lending protocol integrations.
  */
 async function getYieldOpportunities(idleCapital) {
   if (idleCapital <= 0) {
     return { available: false, reason: 'No idle capital to deploy' };
   }
 
-  // WDK lending protocol integration to be implemented
-  // when @tetherto/wdk-lending module is available
-  return {
-    available: false,
-    opportunities: [],
-    note: 'Yield opportunities require WDK lending protocol integration. Contact Tether for @tetherto/wdk-lending module access.'
-  };
+  return aaveIntegration.getYieldOpportunities();
 }
 
 /**
- * Deploy idle capital to yield protocol.
- * Requires WDK lending protocol module (not yet available).
+ * Deploy idle capital to yield protocol (AAVE).
  */
-async function deployToYield(amount, protocol) {
+async function deployToYield(amount, protocol = 'aave') {
   logger.info('Capital reallocation requested', { amount, protocol });
 
-  // WDK lending protocol integration required for yield deployment
-  throw new Error(
-    `Yield deployment to ${protocol} is not yet available. ` +
-    'Requires @tetherto/wdk-lending module for DeFi protocol integration. ' +
-    'Contact Tether for module access or implement direct protocol integration.'
-  );
+  if (protocol.toLowerCase() === 'aave') {
+    return aaveIntegration.depositToAave(amount);
+  }
+
+  throw new Error(`Unknown yield protocol: ${protocol}. Supported: aave`);
+}
+
+/**
+ * Withdraw capital from yield protocol.
+ */
+async function withdrawFromYield(amount, protocol = 'aave') {
+  logger.info('Capital withdrawal from yield requested', { amount, protocol });
+
+  if (protocol.toLowerCase() === 'aave') {
+    return aaveIntegration.withdrawFromAave(amount);
+  }
+
+  throw new Error(`Unknown yield protocol: ${protocol}. Supported: aave`);
 }
 
 // Export as singleton object with all methods
 module.exports = {
   getCapitalStatus,
   getYieldOpportunities,
-  deployToYield
+  deployToYield,
+  withdrawFromYield
 };
