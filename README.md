@@ -25,6 +25,7 @@
 [![🚀 LIVE DEMO](https://img.shields.io/badge/🚀_LIVE_DEMO-Try_Now_on_Render-00d084?style=for-the-badge&logo=vercel)](https://neurvinial.onrender.com)
 [![💰 TREASURY](https://img.shields.io/badge/💰_TREASURY-View_on_Etherscan-1e88e5?style=for-the-badge&logo=ethereum)](https://sepolia.etherscan.io/address/0x731e1629DE770363794b4407105321d04941fBCC)
 [![🤖 TELEGRAM](https://img.shields.io/badge/🤖_TELEGRAM-@neurvinial__bot-26a5e4?style=for-the-badge&logo=telegram)](https://t.me/neurvinial_bot)
+[![💬 WHATSAPP](https://img.shields.io/badge/💬_WHATSAPP-%2B1415_523_8886-25D366?style=for-the-badge&logo=whatsapp)](https://wa.me/14155238886)
 [![⭐ GITHUB](https://img.shields.io/github/stars/fazehfazeh/neurvinial?style=for-the-badge&logo=github)](https://github.com/fazehfazeh/neurvinial)
 
 </div>
@@ -928,7 +929,7 @@ Tether WDK API Key
 
 ```bash
 # Clone repo
-git clone https://github.com/YOUR_USERNAME/neurvinial.git
+git clone https://github.com/Neurvinch/neurvinial.git
 cd neurvinial
 
 # Install dependencies
