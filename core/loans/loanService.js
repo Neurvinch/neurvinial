@@ -320,16 +320,20 @@ async function processRepayment(loanId, repaymentTxHash, options = {}) {
       err.statusCode = 503;
       throw err;
     }
+  } else if (skipVerification) {
+    // Daemon/internal call with skipVerification - allow without full verification
+    logger.info('Repayment processing with skipVerification', { loanId, txHash: repaymentTxHash || 'auto-detected' });
   } else if (!repaymentTxHash || !repaymentTxHash.startsWith('0x')) {
-    // No valid TX hash provided
+    // No valid TX hash provided by user
     const err = new Error('Valid transaction hash required. Send USDT to the treasury and provide the TX hash from Etherscan.');
     err.statusCode = 400;
     throw err;
   }
 
   // Record the repayment transaction
+  const txHashToRecord = repaymentTxHash || `0xAUTO_${Date.now().toString(16)}`;
   const tx = new Transaction({
-    txHash: repaymentTxHash,
+    txHash: txHashToRecord,
     from: agent.walletAddress,
     to: treasuryAddress,
     amount: loan.totalDue,
@@ -344,7 +348,7 @@ async function processRepayment(loanId, repaymentTxHash, options = {}) {
 
   // Update loan status
   loan.status = LOAN_STATUSES.REPAID;
-  loan.repaymentTxHash = repaymentTxHash;
+  loan.repaymentTxHash = txHashToRecord;
   loan.repaidAt = new Date();
   await loan.save();
 
@@ -532,8 +536,9 @@ async function getAgentLoans(did) {
 // HELPER: Mark loan as repaid (alias for processRepayment)
 // =========================================================
 // Used by the repayment monitor daemon for autonomous detection.
+// Daemon already verified the TX via indexer, so skip double verification.
 async function markRepaid(loanId, repaymentTxHash = null) {
-  return processRepayment(loanId, repaymentTxHash);
+  return processRepayment(loanId, repaymentTxHash, { skipVerification: true });
 }
 
 // Export as singleton object with all methods
