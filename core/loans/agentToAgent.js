@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Agent-to-Agent Lending Service
+// Neurvinial — Agent-to-Agent Lending Service
 // ============================================
 // Enables a second agent (Liquidity Pool Agent) to provide capital
 // to Sentinel when reserves run low. This creates a two-tier market:

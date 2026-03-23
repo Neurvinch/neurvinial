@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Winston Logger
+// Neurvinial — Winston Logger
 // ============================================
 // Structured logging with timestamps. Console for dev, file for production.
 
