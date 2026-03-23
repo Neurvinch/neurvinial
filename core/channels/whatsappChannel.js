@@ -639,54 +639,92 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
       return;
     }
 
-    // For demo purposes, mark the oldest loan as repaid
     const loan = activeLoans[0];
-    loan.status = 'repaid';
-    loan.repaidAt = new Date();
-    await loan.save();
+    const treasuryAddress = await walletManager.getSentinelAddress();
 
-    // Improve credit score
-    const agent = await Agent.findOne({ did: context.did });
-    if (agent) {
-      agent.totalRepaid = (agent.totalRepaid || 0) + 1;
-      agent.creditScore = Math.min(100, (agent.creditScore || 50) + 5);
+    // Check if TX hash was provided in the message
+    const txHashMatch = messageText ? messageText.match(/0x[a-fA-F0-9]{64}/) : null;
 
-      // Update tier based on new score
-      if (agent.creditScore >= 80) agent.tier = 'A';
-      else if (agent.creditScore >= 60) agent.tier = 'B';
-      else if (agent.creditScore >= 40) agent.tier = 'C';
-      else agent.tier = 'D';
+    if (!txHashMatch) {
+      // Show instructions to repay on-chain
+      const instructionMessage = `💳 *Repay Your Loan On-Chain*
 
-      await agent.save();
+📋 *Loan Details:*
+💰 Amount to repay: *$${loan.totalDue || loan.amount} USDT*
+🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
+📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
 
-      // Update context
-      context.creditScore = agent.creditScore;
-      context.tier = agent.tier;
-      whatsappContexts.set(phoneNumber, context);
+⛓️ *How to Repay:*
+
+*Step 1:* Send *${loan.totalDue || loan.amount} USDT* on-chain to:
+\`${treasuryAddress}\`
+
+*Step 2:* Get your transaction hash from Etherscan
+
+*Step 3:* Send it here:
+repay 0xYourTxHashHere
+
+*Example:*
+repay 0xabc123def456...
+
+💡 *Tip:* Repaying on-time improves your credit score by +5 points!
+
+⚠️ This requires a REAL blockchain transaction.`;
+
+      await sendWhatsAppMessage(phoneNumber, instructionMessage);
+      return;
     }
+
+    // Real repayment with TX hash
+    const txHash = txHashMatch[0];
+
+    logger.info('Processing on-chain repayment via WhatsApp', {
+      loanId: loan.loanId,
+      txHash,
+      borrowerDid: context.did
+    });
+
+    // Use loan service to process repayment
+    const loanService = require('../loans/loanService');
+    const result = await loanService.processRepayment(loan.loanId, txHash);
+
+    // Update context with new credit score
+    context.creditScore = result.newCreditScore;
+    context.tier = result.newTier;
+    whatsappContexts.set(phoneNumber, context);
+
+    const wasOnTime = result.wasOnTime;
+    const scoreChange = result.creditScoreChange;
 
     const message = `✅ *Loan Repaid Successfully!*
 
-💰 Amount: $${loan.amount} USDT
-📅 Repaid: ${new Date().toLocaleDateString()}
-📊 Loan ID: ${loan.loanId || loan._id.toString().substring(0, 12)}...
+💰 *Amount Repaid:* $${loan.totalDue || loan.amount} USDT
+⛓️ *TX Hash:* ${txHash.substring(0, 20)}...
+🔗 View on Etherscan:
+https://sepolia.etherscan.io/tx/${txHash}
 
-🎉 *Credit Score Improved!*
-New Score: ${agent?.creditScore || 'N/A'}/100
-New Tier: ${agent?.tier || 'N/A'}
+${wasOnTime ? '⏰ *On-Time!* Great job!' : '⚠️ *Late Payment* - Try to repay on time next time'}
 
-Keep repaying on time to improve your credit and unlock higher loan amounts!
+🎉 *Credit Score Updated!*
+📈 Score Change: ${scoreChange > 0 ? '+' : ''}${scoreChange} points
+⭐ New Score: ${result.newCreditScore}/100
+🏆 New Tier: ${result.newTier}
+${result.newTier !== context.tier ? `\n🎊 *TIER UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
 
-💡 Send "status" to see your updated credit profile`;
+${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
+
+💡 Send "status" to see your updated profile
+💰 Send "request" to get another loan`;
 
     await sendWhatsAppMessage(phoneNumber, message);
-    logger.info('Loan repaid', {
+    logger.info('Loan repaid via WhatsApp', {
       did: context.did,
       loanId: loan.loanId || loan._id,
-      amount: loan.amount
+      amount: loan.amount,
+      txHash
     });
   } catch (error) {
-    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    await sendWhatsAppMessage(phoneNumber, `❌ Repayment failed: ${error.message}\n\nMake sure you sent the correct TX hash from a real USDT transfer to the treasury.`);
     logger.error('WhatsApp repay failed', { error: error.message });
   }
 };
