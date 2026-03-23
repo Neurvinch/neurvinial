@@ -239,14 +239,35 @@ async function handleRequest(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const text = msg.text.trim();
-  const match = text.match(/\/request\s+(\d+)/);
 
-  if (!match) {
-    sendMessage(chatId, '📝 *Usage:* /request [amount]\n\n**Example:** /request 500\n\n💡 Send /limit to see your maximum loan amount');
-    return;
+  // Check for extracted amount from OpenClaw or parse from command
+  let amount = msg._extractedAmount;
+  if (!amount) {
+    const match = text.match(/\/request\s+(\d+)/);
+    if (match) {
+      amount = parseInt(match[1]);
+    }
   }
 
-  const amount = parseInt(match[1]);
+  // Also try to extract from natural language like "I need 500"
+  if (!amount) {
+    const nlMatch = text.match(/\b(\d+)\s*(dollars?|usd|usdt)?/i);
+    if (nlMatch) {
+      amount = parseInt(nlMatch[1]);
+    }
+  }
+
+  if (!amount) {
+    sendMessage(chatId, `📝 *How much do you need?*
+
+**Command:** /request [amount]
+**Example:** /request 500
+
+Or just say: "I need 500 dollars"
+
+💡 Send /limit to see your maximum`);
+    return;
+  }
   const context = await getUserContext(chatId, userId);
 
   if (!context.registered) {
@@ -1111,100 +1132,125 @@ ${context.tier === 'A' ? '🌟 Excellent credit! Max loans up to $5,000 at 3.5% 
 }
 
 /**
- * Main message handler
+ * Main message handler - OpenClaw as the intelligent brain
  */
 async function handleMessage(msg) {
   if (!msg || !msg.chat || !msg.text) return;
 
   const text = msg.text.trim();
   const chatId = msg.chat.id;
+  const userId = msg.from?.id;
 
   // Log incoming message
   logger.info('Telegram message received', {
     chatId,
     text: text.substring(0, 50),
-    userId: msg.from?.id
+    userId
   });
 
   try {
-    // Command routing
-    if (text.startsWith('/start')) {
-      await handleStart(msg);
-    } else if (text.startsWith('/register')) {
+    // Get user context for intelligent processing
+    const context = await getUserContext(chatId, userId);
+
+    // ========================================
+    // OPENCLAW FIRST - Intelligent Intent Recognition
+    // ========================================
+    let openclawDecision = null;
+    try {
+      const { processIntelligentCommand } = require('../agent/openclawIntegration');
+
+      openclawDecision = await processIntelligentCommand({
+        command: text,
+        user: {
+          id: userId,
+          did: context.did,
+          chatId
+        },
+        context: {
+          registered: context.registered,
+          creditScore: context.creditScore,
+          tier: context.tier,
+          walletAddress: context.walletAddress
+        },
+        channel: 'telegram',
+        message: text
+      });
+
+      logger.info('OpenClaw decision', {
+        action: openclawDecision?.result?.action,
+        confidence: openclawDecision?.result?.confidence,
+        intent: openclawDecision?.result?.intent
+      });
+    } catch (error) {
+      logger.warn('OpenClaw processing failed, falling back to command routing', { error: error.message });
+    }
+
+    // ========================================
+    // Route based on OpenClaw decision or fallback to command parsing
+    // ========================================
+    const action = openclawDecision?.result?.action;
+    const extractedData = openclawDecision?.result?.extractedData || {};
+
+    // If OpenClaw provided a smart response for conversation/greeting
+    if (action === 'conversation' || action === 'greet') {
+      const response = openclawDecision?.result?.response ||
+        "Hey! I'm SENTINEL, your autonomous lending agent. Try /help to see what I can do!";
+      sendMessage(chatId, response);
+      return;
+    }
+
+    // Route to handlers based on OpenClaw action or command prefix
+    if (action === 'register_agent' || text.startsWith('/start') || text.startsWith('/register')) {
       await handleRegister(msg);
-    } else if (text.startsWith('/status')) {
+    } else if (action === 'check_status' || text.startsWith('/status')) {
       await handleStatus(msg);
-    } else if (text.startsWith('/request')) {
+    } else if (action === 'request_loan' || text.startsWith('/request')) {
+      // Use extracted amount from OpenClaw if available
+      if (extractedData.amount && !text.startsWith('/request')) {
+        msg._extractedAmount = extractedData.amount;
+      }
       await handleRequest(msg);
-    } else if (text.startsWith('/approve')) {
+    } else if (action === 'approve_loan' || text.startsWith('/approve')) {
       await handleApprove(msg);
-    } else if (text.startsWith('/history')) {
+    } else if (action === 'view_history' || text.startsWith('/history')) {
       await handleHistory(msg);
-    } else if (text.startsWith('/wallet')) {
+    } else if (action === 'check_balance' || text.startsWith('/wallet')) {
       await handleWallet(msg);
     } else if (text.startsWith('/balance')) {
       await handleBalance(msg);
-    } else if (text.startsWith('/repay')) {
+    } else if (action === 'mark_repaid' || text.startsWith('/repay')) {
       await handleRepay(msg);
     } else if (text.startsWith('/limit')) {
       await handleLimit(msg);
     } else if (text.startsWith('/health')) {
       await handleHealth(msg);
-    } else if (text.startsWith('/treasury')) {
+    } else if (action === 'show_treasury' || text.startsWith('/treasury')) {
       await handleTreasury(msg);
-    } else if (text.startsWith('/tiers')) {
+    } else if (action === 'show_tiers' || text.startsWith('/tiers')) {
       await handleTiers(msg);
-    } else if (text.startsWith('/upgrade')) {
+    } else if (action === 'show_upgrade_tips' || text.startsWith('/upgrade')) {
       await handleUpgrade(msg);
     } else if (text.startsWith('/loans') || text.startsWith('/dashboard')) {
       await handleLoans(msg);
-    } else if (text.startsWith('/help')) {
+    } else if (action === 'show_help' || text.startsWith('/help')) {
       await handleHelp(msg);
+    } else if (action === 'suggest_register') {
+      // OpenClaw determined user needs to register
+      const response = openclawDecision?.result?.response ||
+        "To access SENTINEL's features, you need to register first! Send /register to create your account.";
+      sendMessage(chatId, response);
+    } else if (openclawDecision?.result?.response) {
+      // OpenClaw provided a custom response
+      sendMessage(chatId, openclawDecision.result.response);
     } else {
-      // Unknown command - use OpenClaw for intelligent response
-      const userId = msg.from?.id;
-      const context = await getUserContext(chatId, userId);
-
-      try {
-        const { processIntelligentCommand } = require('../agent/openclawIntegration');
-
-        const result = await processIntelligentCommand({
-          command: 'unknown',
-          user: { id: userId, did: context.did },
-          context: {
-            registered: context.registered,
-            creditScore: context.creditScore,
-            tier: context.tier,
-            message: text
-          },
-          channel: 'telegram',
-          message: text
-        });
-
-        // If OpenClaw provides an intelligent response
-        if (result.result && result.result.action !== 'error') {
-          const response = result.result.data?.response ||
-                          result.result.reasoning ||
-                          `I understand you're asking about "${text}". Here's what I can help with:\n\n` +
-                          (context.registered ?
-                            `💰 Send /request ${Math.min(500, context.tier === 'A' ? 5000 : context.tier === 'B' ? 2000 : 500)} for a loan\n📊 Send /status for your credit info\n💳 Send /wallet for your address` :
-                            `🚀 Send /register to create your account\n💰 Then /request 300 for your first loan\n❓ Send /help for more commands`);
-
-          sendMessage(chatId, response);
-          return;
-        }
-      } catch (error) {
-        logger.warn('OpenClaw unknown command failed, using fallback', { error: error.message });
-      }
-
       // Fallback: Smart unknown command response
       const suggestions = context.registered ?
         ['/status', '/request 300', '/balance', '/wallet'] :
         ['/register', '/help'];
 
-      const response = `🤔 I didn't understand "${text}"
+      const response = `🤔 I didn't quite get that.
 
-💡 **Try these commands:**
+💡 **Try these:**
 ${suggestions.map(cmd => `• ${cmd}`).join('\n')}
 
 ❓ Send /help for complete list
