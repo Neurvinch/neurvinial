@@ -241,6 +241,7 @@ async function sendUSDT(recipientAddress, amount) {
 
   const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
   const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT has 6 decimals
+  const tokenSymbol = config.wdk.network === 'sepolia' ? 'USDT' : 'USDT'; // Could be USDC on some testnets
 
   const is4337Active = is4337Enabled();
 
