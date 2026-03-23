@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — DID (Decentralized Identity) Service
+// Neurvinial — DID (Decentralized Identity) Service
 // ============================================
 // Generates, resolves, and verifies W3C-compatible DIDs for agents.
 //
