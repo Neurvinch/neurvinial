@@ -653,11 +653,16 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
     const loan = disbursedLoans[0];
     const treasuryAddress = await walletManager.getSentinelAddress();
 
-    // Validate loan has required fields
-    if (!loan.totalDue || loan.totalDue <= 0) {
-      logger.error('Loan missing totalDue', { loanId: loan.loanId, borrowerDid: context.did });
-      await sendWhatsAppMessage(phoneNumber, `❌ Loan record incomplete. Please contact support.\n\nLoan ID: ${loan.loanId}`);
-      return;
+    // Calculate totalDue if missing (fallback to amount + interest)
+    let repaymentAmount = loan.totalDue;
+    if (!repaymentAmount || repaymentAmount <= 0) {
+      const interest = loan.interestAccrued || (loan.amount * (loan.apr || 0.05) * (30 / 365));
+      repaymentAmount = parseFloat((loan.amount + interest).toFixed(2));
+
+      // Fix the loan record
+      loan.totalDue = repaymentAmount;
+      await loan.save();
+      logger.info('Fixed missing totalDue on loan', { loanId: loan.loanId, totalDue: repaymentAmount });
     }
 
     // Check if TX hash was provided in the message
@@ -668,13 +673,13 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
       const instructionMessage = `💳 *Repay Your Loan On-Chain*
 
 📋 *Loan Details:*
-💰 Amount to repay: *$${loan.totalDue} USDT*
+💰 Amount to repay: *$${repaymentAmount} USDT*
 🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
 📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
 
 ⛓️ *How to Repay:*
 
-*Step 1:* Send *${loan.totalDue} USDT* on-chain to:
+*Step 1:* Send *${repaymentAmount} USDT* on-chain to:
 \`${treasuryAddress}\`
 
 *Step 2:* Get your transaction hash from Etherscan

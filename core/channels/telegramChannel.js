@@ -665,7 +665,7 @@ async function handleRepay(msg) {
     const disbursedLoans = await Loan.find({
       borrowerDid: context.did,
       status: 'disbursed'
-    }).sort({ createdAt: 1 });
+    }).sort({ createdAt: -1 });
 
     if (disbursedLoans.length === 0) {
       // Check if there are pending/approved loans that haven't been disbursed
@@ -686,11 +686,17 @@ async function handleRepay(msg) {
     const loan = disbursedLoans[0];
     const treasuryAddress = await walletManager.getSentinelAddress();
 
-    // Validate loan has required fields
-    if (!loan.totalDue || loan.totalDue <= 0) {
-      logger.error('Loan missing totalDue', { loanId: loan.loanId, borrowerDid: context.did });
-      sendMessage(chatId, `❌ Loan record incomplete. Please contact support.\n\nLoan ID: ${loan.loanId}`);
-      return;
+    // Calculate totalDue if missing (fallback to amount + interest)
+    let repaymentAmount = loan.totalDue;
+    if (!repaymentAmount || repaymentAmount <= 0) {
+      // Calculate from amount + interest
+      const interest = loan.interestAccrued || (loan.amount * (loan.apr || 0.05) * (30 / 365));
+      repaymentAmount = parseFloat((loan.amount + interest).toFixed(2));
+
+      // Also fix the loan record in database
+      loan.totalDue = repaymentAmount;
+      await loan.save();
+      logger.info('Fixed missing totalDue on loan', { loanId: loan.loanId, totalDue: repaymentAmount });
     }
 
     // Extract TX hash from command (if provided)
@@ -702,13 +708,13 @@ async function handleRepay(msg) {
       const message = `💳 *Repay Your Loan On-Chain*
 
 📋 **Loan Details:**
-💰 Amount to repay: **$${loan.totalDue} USDT**
+💰 Amount to repay: **$${repaymentAmount} USDT**
 🆔 Loan ID: ${loanId.substring(0, 16)}...
 📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
 
 ⛓️ **How to Repay:**
 
-**Step 1:** Send **${loan.totalDue} USDT** on-chain to:
+**Step 1:** Send **${repaymentAmount} USDT** on-chain to:
 \`${treasuryAddress}\`
 (Click to copy address ☝️)
 
@@ -757,7 +763,7 @@ Your wallet: \`${context.walletAddress || 'Not available'}\`
 
       const message = `✅ *Loan Repaid Successfully!*
 
-💰 **Amount Repaid:** $${loan.totalDue} USDT
+💰 **Amount Repaid:** $${repaymentAmount} USDT
 ⛓️ **TX Hash:** \`${txHash.substring(0, 20)}...\`
 🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${txHash})
 
