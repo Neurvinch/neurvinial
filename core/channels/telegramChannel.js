@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Telegram Channel (REWRITTEN)
+// Neurvinial — Telegram Channel (REWRITTEN)
 // ============================================
 // Clean, working Telegram bot for hackathon demo
 // Real USDT loans via ERC-4337 Account Abstraction
@@ -100,7 +100,7 @@ async function sendMessage(chatId, text, options = {}) {
  */
 
 async function handleStart(msg) {
-  const text = `🤖 *Welcome to SENTINEL*
+  const text = `🤖 *Welcome to Neurvinial*
 
 I'm your autonomous lending agent powered by ERC-4337 and real USDT.
 
@@ -315,7 +315,7 @@ Or just say: "I need 500 dollars"
       dueDate.setDate(dueDate.getDate() + 30);
 
       const loan = new Loan({
-        loanId: `SENTINEL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        loanId: `Neurvinial-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
         borrowerDid: context.did,
         amount,
         apr: interestRate,
@@ -1013,7 +1013,7 @@ async function handleHealth(msg) {
     const ethBal = await walletManager.getSentinelETHBalance();
     const usdtBal = await walletManager.getSentinelUSDTBalance();
 
-    const healthText = `🏥 *SENTINEL System Health*
+    const healthText = `🏥 *Neurvinial System Health*
 
 🌐 **Main Services:**
 • API Server: ✅ Online
@@ -1064,7 +1064,7 @@ async function handleTreasury(msg) {
     const usdtBalance = await walletManager.getSentinelUSDTBalance();
     const ethBalance = await walletManager.getSentinelETHBalance();
 
-    const message = `🏦 **SENTINEL Treasury**
+    const message = `🏦 **Neurvinial Treasury**
 
 💰 **Balances:**
 • USDT: $${usdtBalance.balance.toFixed(2)}
@@ -1098,7 +1098,7 @@ async function handleTiers(msg) {
   const userId = msg.from.id;
   const context = await getUserContext(chatId, userId);
 
-  const message = `📊 **SENTINEL Credit Tiers**
+  const message = `📊 **Neurvinial Credit Tiers**
 
 🥇 **Tier A** (Score 80-100)
 • Max Loan: $5,000 USDT
@@ -1221,7 +1221,7 @@ async function handleCapital(msg) {
     const capitalService = require('../reallocator/capitalService');
     const status = await capitalService.getCapitalStatus();
 
-    const message = `🏦 **SENTINEL Capital Overview**
+    const message = `🏦 **Neurvinial Capital Overview**
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1326,10 +1326,10 @@ async function handleLPPool(msg) {
 💡 **How Agent-to-Agent Lending Works:**
 
 1️⃣ LP Agents commit capital at 2% APR
-2️⃣ SENTINEL borrows when treasury is low
-3️⃣ SENTINEL lends to borrowers at 3.5-8% APR
+2️⃣ Neurvinial borrows when treasury is low
+3️⃣ Neurvinial lends to borrowers at 3.5-8% APR
 4️⃣ LP Agents get auto-repaid with interest
-5️⃣ SENTINEL earns the spread (1.5-6%)
+5️⃣ Neurvinial earns the spread (1.5-6%)
 
 ✅ **Autonomous:** No human intervention!
 
@@ -1511,7 +1511,7 @@ async function handleHelp(msg) {
   let helpText;
 
   if (!context.registered) {
-    helpText = `🚀 *Welcome to SENTINEL!*
+    helpText = `🚀 *Welcome to Neurvinial!*
 
 *The Autonomous AI Lending Agent*
 
@@ -1523,7 +1523,7 @@ async function handleHelp(msg) {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💰 *What SENTINEL Offers:*
+💰 *What Neurvinial Offers:*
 • Real USDT loans on Ethereum
 • No gas fees (ERC-4337)
 • AI-powered credit scoring
@@ -1543,7 +1543,7 @@ Just say things like:
     const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
     const maxLoan = tierLimits[context.tier] || 500;
 
-    helpText = `📊 *SENTINEL Commands* (Tier ${context.tier})
+    helpText = `📊 *Neurvinial Commands* (Tier ${context.tier})
 
 💰 **Your limit:** $${maxLoan} USDT | Score: ${context.creditScore || 50}/100
 
@@ -1665,7 +1665,7 @@ async function handleMessage(msg) {
     // If OpenClaw provided a smart response for conversation/greeting
     if (action === 'conversation' || action === 'greet') {
       const response = openclawDecision?.result?.response ||
-        "Hey! I'm SENTINEL, your autonomous lending agent. Try /help to see what I can do!";
+        "Hey! I'm Neurvinial, your autonomous lending agent. Try /help to see what I can do!";
       sendMessage(chatId, response);
       return;
     }
@@ -1714,7 +1714,7 @@ async function handleMessage(msg) {
     } else if (action === 'suggest_register') {
       // OpenClaw determined user needs to register
       const response = openclawDecision?.result?.response ||
-        "To access SENTINEL's features, you need to register first! Send /register to create your account.";
+        "To access Neurvinial's features, you need to register first! Send /register to create your account.";
       sendMessage(chatId, response);
     } else if (openclawDecision?.result?.response) {
       // OpenClaw provided a custom response

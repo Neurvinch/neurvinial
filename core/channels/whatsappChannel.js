@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — WhatsApp Channel Integration
+// Neurvinial — WhatsApp Channel Integration
 // ============================================
 // Integrates WhatsApp for lending agent interaction using Twilio API.
 // Users can request loans, check status, and get updates via WhatsApp.
@@ -929,7 +929,7 @@ https://sepolia.etherscan.io/address/${walletAddress}
 const handleWhatsAppTiers = async (phoneNumber) => {
   const context = await getOrCreateWhatsAppContext(phoneNumber);
 
-  const tiersInfo = `📊 *SENTINEL Credit Tiers*
+  const tiersInfo = `📊 *Neurvinial Credit Tiers*
 
 ━━━━━━━━━━━━━━━━━━━
 
@@ -1070,7 +1070,7 @@ const handleWhatsAppCapital = async (phoneNumber) => {
     const lpAgentManager = require('../capital/lpAgentManager');
     const lpStats = lpAgentManager.getLPPoolStats();
 
-    const message = `💰 *SENTINEL Capital Overview*
+    const message = `💰 *Neurvinial Capital Overview*
 
 ━━━━━━━━━━━━━━━━━━━
 
@@ -1093,8 +1093,8 @@ const handleWhatsAppCapital = async (phoneNumber) => {
 📊 *How Capital Works:*
 1. Treasury holds USDT for loans
 2. LP Agents supply extra capital (2% APR)
-3. SENTINEL lends to borrowers (3.5-8% APR)
-4. SENTINEL earns the spread
+3. Neurvinial lends to borrowers (3.5-8% APR)
+4. Neurvinial earns the spread
 
 💡 Send *lppool* for LP details or *treasury* for address`;
 
@@ -1130,9 +1130,9 @@ const handleWhatsAppLPPool = async (phoneNumber) => {
 
 💡 *How LP Pool Works:*
 1️⃣ Other AI agents supply capital at 2% APR
-2️⃣ SENTINEL borrows when treasury is low
-3️⃣ SENTINEL lends to borrowers at 5-8% APR
-4️⃣ SENTINEL earns the spread (3-6%)
+2️⃣ Neurvinial borrows when treasury is low
+3️⃣ Neurvinial lends to borrowers at 5-8% APR
+4️⃣ Neurvinial earns the spread (3-6%)
 5️⃣ Everyone profits automatically! ✅
 
 ━━━━━━━━━━━━━━━━━━━`;
@@ -1204,7 +1204,7 @@ const handleWhatsAppAAVE = async (phoneNumber) => {
 2. Idle capital is deposited to AAVE V3 pool
 3. AAVE pays ~4.2% APY on deposits
 4. When loan requested, capital is withdrawn
-5. SENTINEL earns yield on unused funds!
+5. Neurvinial earns yield on unused funds!
 
 ⚡ *Benefits:*
 • Idle money earns yield
@@ -1242,7 +1242,7 @@ const handleWhatsAppTreasury = async (phoneNumber) => {
       } catch {}
     }
 
-    const message = `🏦 *SENTINEL Treasury*
+    const message = `🏦 *Neurvinial Treasury*
 
 ━━━━━━━━━━━━━━━━━━━
 
@@ -1306,7 +1306,7 @@ const handleWhatsAppHealth = async (phoneNumber) => {
       }
     } catch {}
 
-    const message = `🏥 *SENTINEL System Health*
+    const message = `🏥 *Neurvinial System Health*
 
 ━━━━━━━━━━━━━━━━━━━
 
@@ -1452,7 +1452,7 @@ const handleWhatsAppHelp = async (phoneNumber) => {
     let helpMessage;
 
     if (!context.registered) {
-      helpMessage = `🚀 *Welcome to SENTINEL!*
+      helpMessage = `🚀 *Welcome to Neurvinial!*
 
 ━━━━━━━━━━━━━━━━━━━
 
@@ -1480,7 +1480,7 @@ Just say things like:
       const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
       const maxLoan = tierLimits[context.tier] || 500;
 
-      helpMessage = `📊 *SENTINEL Commands* (Tier ${context.tier})
+      helpMessage = `📊 *Neurvinial Commands* (Tier ${context.tier})
 
 ━━━━━━━━━━━━━━━━━━━
 

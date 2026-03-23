@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Loan Lifecycle Service
+// Neurvinial — Loan Lifecycle Service
 // ============================================
 // Central business logic for the entire lending operation.
 // Manages the full lifecycle:

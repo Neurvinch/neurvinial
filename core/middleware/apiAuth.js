@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — API Authentication Middleware
+// Neurvinial — API Authentication Middleware
 // ============================================
 // Protects API endpoints with API key authentication.
 // API keys can be configured in environment variables.
