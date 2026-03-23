@@ -396,31 +396,43 @@ You don't have any loans waiting for approval.
       throw new Error('Wallet not found. Please send "register" again.');
     }
 
-    // Perform REAL USDT transfer via WDK
+    // Perform REAL USDT transfer via WDK - NO MOCKS EVER
     let txHash = null;
-    let transferSuccess = false;
-    let isSimulated = false;
 
     try {
-      const treasuryBalance = await walletManager.getSentinelUSDTBalance();
-
-      if (treasuryBalance.balance < loan.amount) {
-        // Simulate transfer for demo purposes when treasury is empty
-        txHash = `0x${Date.now().toString(16)}${Math.random().toString(16).substr(2, 40)}`;
-        transferSuccess = true;
-        isSimulated = true;
-        logger.info('Simulated USDT transfer for demo', { amount: loan.amount, to: agent.walletAddress });
-      } else {
-        // Real transfer
-        const transferResult = await walletManager.sendUSDT(agent.walletAddress, loan.amount);
-        txHash = transferResult.hash;
-        transferSuccess = true;
-        isSimulated = transferResult.simulated || false;
-        logger.info('Real USDT transfer completed', { txHash, amount: loan.amount });
-      }
+      // Real transfer only - will throw error if treasury is insufficient
+      const transferResult = await walletManager.sendUSDT(agent.walletAddress, loan.amount);
+      txHash = transferResult.hash;
+      logger.info('Real USDT transfer completed', { txHash, amount: loan.amount });
     } catch (txError) {
-      logger.error('Transfer failed', { error: txError.message });
-      throw new Error(`Transfer failed: ${txError.message}`);
+      // Get treasury address to show user where to fund
+      let treasuryAddress = 'unknown';
+      try {
+        treasuryAddress = await walletManager.getSentinelAddress();
+      } catch {}
+
+      logger.error('Transfer failed', { error: txError.message, treasuryAddress });
+
+      const fundingMessage = `❌ *Transfer Failed - Treasury Needs Funding*
+
+Error: ${txError.message}
+
+💰 Treasury Address:
+${treasuryAddress}
+
+🔧 How to Fix:
+1. Get Sepolia USDT from a faucet
+2. Send USDT to the treasury address above
+3. Try "approve" again
+
+🚰 Sepolia Faucets:
+• faucet.circle.com (USDC)
+• sepoliafaucet.com (ETH)
+
+📊 Your loan approval is still valid!`;
+
+      await sendWhatsAppMessage(phoneNumber, fundingMessage);
+      return;
     }
 
     // Update loan status
@@ -441,14 +453,14 @@ https://sepolia.etherscan.io/tx/${txHash}
 📊 Loan Details:
 • Interest Rate: ${(loan.apr * 100).toFixed(1)}% APR
 • Due Date: ${loan.dueDate.toDateString()}
-• Network: Ethereum Sepolia${isSimulated ? '\n\n⚠️ Demo Mode: Simulated transfer for presentation' : ''}
+• Network: Ethereum Sepolia
 
 💡 Next Steps:
 • Monitor your wallet for USDT arrival
 • Send "repay" when ready to repay the loan
 • Repay on time to improve your credit score!
 
-🎉 ERC-4337 Magic: You received USDT without needing ETH for gas!`;
+🎉 Real USDT sent via ERC-4337!`;
 
     await sendWhatsAppMessage(phoneNumber, successMessage);
 

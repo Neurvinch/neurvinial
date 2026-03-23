@@ -379,31 +379,43 @@ You don't have any loans waiting for approval.
       throw new Error('Wallet not found. Please /register again.');
     }
 
-    // Perform REAL USDT transfer via WDK
+    // Perform REAL USDT transfer via WDK - NO MOCKS EVER
     let txHash = null;
-    let transferSuccess = false;
-    let isSimulated = false;
 
     try {
-      const treasuryBalance = await walletManager.getSentinelUSDTBalance();
-
-      if (treasuryBalance.balance < loan.amount) {
-        // Simulate transfer for demo purposes when treasury is empty
-        txHash = `0x${Date.now().toString(16)}${Math.random().toString(16).substr(2, 40)}`;
-        transferSuccess = true;
-        isSimulated = true;
-        logger.info('Simulated USDT transfer for demo', { amount: loan.amount, to: agent.walletAddress });
-      } else {
-        // Real transfer
-        const transferResult = await walletManager.sendUSDT(agent.walletAddress, loan.amount);
-        txHash = transferResult.hash;
-        transferSuccess = true;
-        isSimulated = transferResult.simulated || false;
-        logger.info('Real USDT transfer completed', { txHash, amount: loan.amount });
-      }
+      // Real transfer only - will throw error if treasury is insufficient
+      const transferResult = await walletManager.sendUSDT(agent.walletAddress, loan.amount);
+      txHash = transferResult.hash;
+      logger.info('Real USDT transfer completed', { txHash, amount: loan.amount });
     } catch (txError) {
-      logger.error('Transfer failed', { error: txError.message });
-      throw new Error(`Transfer failed: ${txError.message}`);
+      // Get treasury address to show user where to fund
+      let treasuryAddress = 'unknown';
+      try {
+        treasuryAddress = await walletManager.getSentinelAddress();
+      } catch {}
+
+      logger.error('Transfer failed', { error: txError.message, treasuryAddress });
+
+      const fundingMessage = `❌ **Transfer Failed - Treasury Needs Funding**
+
+**Error:** ${txError.message}
+
+💰 **Treasury Address:**
+\`${treasuryAddress}\`
+
+🔧 **How to Fix:**
+1. Get Sepolia USDT from a faucet
+2. Send USDT to the treasury address above
+3. Try /approve again
+
+🚰 **Sepolia Faucets:**
+• https://faucet.circle.com (USDC - swap to USDT)
+• https://sepoliafaucet.com (ETH for gas)
+
+📊 Your loan approval is still valid. Fund treasury and retry!`;
+
+      sendMessage(chatId, fundingMessage);
+      return;
     }
 
     // Update loan status
@@ -424,14 +436,14 @@ https://sepolia.etherscan.io/tx/${txHash}
 📊 **Loan Details:**
 • **Interest Rate:** ${(loan.apr * 100).toFixed(1)}% APR
 • **Due Date:** ${loan.dueDate.toDateString()}
-• **Network:** Ethereum Sepolia${isSimulated ? '\n\n⚠️ **Demo Mode:** Simulated transfer for presentation' : ''}
+• **Network:** Ethereum Sepolia
 
 💡 **Next Steps:**
 • Monitor your wallet for USDT arrival
 • Use /repay when ready to repay the loan
 • Repay on time to improve your credit score!
 
-🎉 **ERC-4337 Magic:** You received USDT without needing ETH for gas!`;
+🎉 **ERC-4337 Magic:** Real USDT sent to your wallet!`;
 
     sendMessage(chatId, successMessage);
 
@@ -790,6 +802,223 @@ https://neurvinial.onrender.com/health
   }
 }
 
+/**
+ * /treasury - Show treasury balance and address (for funding)
+ */
+async function handleTreasury(msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const treasuryAddress = await walletManager.getSentinelAddress();
+    const usdtBalance = await walletManager.getSentinelUSDTBalance();
+    const ethBalance = await walletManager.getSentinelETHBalance();
+
+    const message = `🏦 **SENTINEL Treasury**
+
+💰 **Balances:**
+• USDT: $${usdtBalance.balance.toFixed(2)}
+• ETH: ${ethBalance.balance.toFixed(6)} (gas)
+
+📍 **Treasury Address:**
+\`${treasuryAddress}\`
+
+🔗 **View on Etherscan:**
+https://sepolia.etherscan.io/address/${treasuryAddress}
+
+${usdtBalance.balance < 100 ? `⚠️ **Low Balance Alert!**
+Treasury needs USDT to disburse loans.
+
+🚰 **Get Sepolia USDT:**
+• https://faucet.circle.com` : '✅ Treasury funded and ready!'}
+
+🌐 **Network:** Ethereum Sepolia`;
+
+    sendMessage(chatId, message);
+  } catch (error) {
+    sendMessage(chatId, `❌ Treasury check failed: ${error.message}`);
+  }
+}
+
+/**
+ * /tiers - Credit tier breakdown
+ */
+async function handleTiers(msg) {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const context = await getUserContext(chatId, userId);
+
+  const message = `📊 **SENTINEL Credit Tiers**
+
+🥇 **Tier A** (Score 80-100)
+• Max Loan: $5,000 USDT
+• Interest: 3.5% APR
+• Status: Premium borrower
+
+🥈 **Tier B** (Score 60-79)
+• Max Loan: $2,000 USDT
+• Interest: 5.0% APR
+• Status: Good standing
+
+🥉 **Tier C** (Score 40-59)
+• Max Loan: $500 USDT
+• Interest: 8.0% APR
+• Status: Building credit
+
+❌ **Tier D** (Score 0-39)
+• Max Loan: $0
+• Status: Must build credit first
+
+${context.registered ? `\n📍 **Your Status:**
+• Score: ${context.creditScore}/100
+• Tier: ${context.tier}
+• Recommendation: ${context.tier === 'A' ? 'Excellent! Max benefits unlocked' : context.tier === 'B' ? 'Repay 2 more loans for Tier A' : context.tier === 'C' ? 'Build history with small loans' : 'Start with /register'}` : '\n🚀 /register to get your credit score!'}
+
+💡 /upgrade for tips to improve your tier`;
+
+  sendMessage(chatId, message);
+}
+
+/**
+ * /upgrade - Tips to improve credit
+ */
+async function handleUpgrade(msg) {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const context = await getUserContext(chatId, userId);
+
+  if (!context.registered) {
+    sendMessage(chatId, '❌ Please /register first to see upgrade tips.');
+    return;
+  }
+
+  const currentTier = context.tier;
+  const score = context.creditScore || 50;
+
+  let tips;
+  if (currentTier === 'A') {
+    tips = `🌟 **Congratulations!** You're at Tier A!
+
+✅ You've already unlocked:
+• Maximum loan limit: $5,000
+• Lowest rate: 3.5% APR
+• Priority processing
+
+💡 **Keep it up by:**
+• Maintaining on-time repayments
+• Keeping utilization below 50%
+• Building consistent loan history`;
+  } else if (currentTier === 'B') {
+    tips = `📈 **Upgrade Path: B → A**
+
+**Current:** Score ${score}, need 80+ for Tier A
+
+✅ **Actions to upgrade:**
+1. Repay 2+ loans on-time (+15 points each)
+2. Clear any outstanding balance
+3. Build 3+ month history
+
+💰 **Benefits of Tier A:**
+• Max loan: $5,000 (vs $2,000 now)
+• Interest: 3.5% (vs 5.0% now)
+
+🎯 **Next step:** /request ${Math.min(500, 2000)} and repay on-time!`;
+  } else if (currentTier === 'C') {
+    tips = `📈 **Upgrade Path: C → B**
+
+**Current:** Score ${score}, need 60+ for Tier B
+
+✅ **Actions to upgrade:**
+1. Request small loan: /request 100
+2. Repay before due date (+10 points)
+3. Repeat 2-3 times (+10 points each)
+
+💰 **Benefits of Tier B:**
+• Max loan: $2,000 (vs $500 now)
+• Interest: 5.0% (vs 8.0% now)
+
+⚡ **Pro tip:** Smaller loans = easier to repay = faster upgrade!
+
+🎯 **Start now:** /request 100`;
+  } else {
+    tips = `📈 **Build Your Credit (Tier D)**
+
+**Current:** Score ${score}, need 40+ for Tier C
+
+🚀 **Getting started:**
+1. Your account is new - that's okay!
+2. Wait for initial credit assessment
+3. Start with smallest available loan
+
+⏳ **What happens:**
+• New accounts start at Tier C-D
+• Each on-time repayment adds points
+• Build to Tier C in 1-2 loans
+
+💡 Check back with /status in 24 hours`;
+  }
+
+  sendMessage(chatId, tips);
+}
+
+/**
+ * /loans or /dashboard - View all your loans
+ */
+async function handleLoans(msg) {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const context = await getUserContext(chatId, userId);
+
+  if (!context.registered) {
+    sendMessage(chatId, '❌ Please /register first.');
+    return;
+  }
+
+  try {
+    const loans = await Loan.find({ borrowerDid: context.did }).sort({ createdAt: -1 }).limit(10);
+
+    if (loans.length === 0) {
+      sendMessage(chatId, `📋 **No Loans Yet**
+
+You haven't taken any loans.
+
+🚀 **Get started:**
+• /limit - Check your loan limit
+• /request 100 - Apply for first loan
+
+💡 Building loan history improves your credit!`);
+      return;
+    }
+
+    const active = loans.filter(l => ['pending', 'disbursed'].includes(l.status));
+    const completed = loans.filter(l => l.status === 'repaid').length;
+    const totalBorrowed = loans.reduce((sum, l) => sum + l.amount, 0);
+
+    let loanList = '';
+    for (const loan of active) {
+      const daysLeft = Math.ceil((new Date(loan.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+      const status = loan.status === 'pending' ? '⏳ Pending' : '💰 Active';
+      loanList += `\n• ${status} $${loan.amount} | Due: ${daysLeft > 0 ? daysLeft + ' days' : 'OVERDUE!'}`;
+    }
+
+    const message = `📋 **Your Loan Dashboard**
+
+📊 **Summary:**
+• Active Loans: ${active.length}
+• Completed: ${completed}
+• Total Borrowed: $${totalBorrowed}
+
+${active.length > 0 ? `📍 **Active Loans:**${loanList}` : '✅ No active loans'}
+
+🎯 **Actions:**
+${active.some(l => l.status === 'pending') ? '• /approve - Disburse pending loan\n' : ''}${active.some(l => l.status === 'disbursed') ? '• /repay - Mark loan as repaid\n' : ''}• /history - Full loan history
+• /request 300 - New loan`;
+
+    sendMessage(chatId, message);
+  } catch (error) {
+    sendMessage(chatId, `❌ Failed to load loans: ${error.message}`);
+  }
+}
+
 async function handleHelp(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -853,13 +1082,21 @@ async function handleHelp(msg) {
 • /status - Check credit (Score: ${context.creditScore || 50})
 • /limit - See loan limits & terms
 • /request ${Math.min(maxLoan, 300)} - Apply for loan
-• /wallet - View your address
-• /balance - Check loan portfolio
+• /loans - View your loan dashboard
 
 💰 **Loan Management:**
 • /approve - Disburse pending loan
 • /repay - Mark loan repaid (improves credit!)
 • /history - View loan history
+
+📈 **Credit Tools:**
+• /tiers - See all credit tiers
+• /upgrade - Tips to improve your score
+• /treasury - Check system treasury
+
+💳 **Wallet:**
+• /wallet - View your address
+• /balance - Check balance
 
 🚀 **Tips for Tier ${context.tier}:**
 ${context.tier === 'A' ? '🌟 Excellent credit! Max loans up to $5,000 at 3.5% APR' :
@@ -913,6 +1150,14 @@ async function handleMessage(msg) {
       await handleLimit(msg);
     } else if (text.startsWith('/health')) {
       await handleHealth(msg);
+    } else if (text.startsWith('/treasury')) {
+      await handleTreasury(msg);
+    } else if (text.startsWith('/tiers')) {
+      await handleTiers(msg);
+    } else if (text.startsWith('/upgrade')) {
+      await handleUpgrade(msg);
+    } else if (text.startsWith('/loans') || text.startsWith('/dashboard')) {
+      await handleLoans(msg);
     } else if (text.startsWith('/help')) {
       await handleHelp(msg);
     } else {
