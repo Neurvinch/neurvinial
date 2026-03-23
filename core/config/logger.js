@@ -13,7 +13,7 @@ const logger = createLogger({
     format.errors({ stack: true }),
     format.json()
   ),
-  defaultMeta: { service: 'sentinel' },
+  defaultMeta: { service: 'neurvinial' },
   transports: [
     // Console transport — colorized in development
     new transports.Console({
@@ -31,11 +31,11 @@ const logger = createLogger({
 // In production, also log to file
 if (config.server.env === 'production') {
   logger.add(new transports.File({
-    filename: 'sentinel-error.log',
+    filename: 'neurvinial-error.log',
     level: 'error'
   }));
   logger.add(new transports.File({
-    filename: 'sentinel.log'
+    filename: 'neurvinial.log'
   }));
 }
 

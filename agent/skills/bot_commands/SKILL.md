@@ -1,5 +1,5 @@
 ---
-name: sentinel_bot_commands
+name: neurvinial_bot_commands
 description: Intelligent natural language processor for Telegram and WhatsApp. Interprets user intent and routes to appropriate actions.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: sentinel_wdk
+name: neurvinial_wdk
 description: Execute on-chain transactions using Tether WDK. Transfer USDT, check balances, and manage wallets.
 ---
 

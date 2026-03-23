@@ -1,5 +1,5 @@
 ---
-name: sentinel_credit
+name: neurvinial_credit
 description: Score an agent's creditworthiness using on-chain history and ML prediction. Returns credit score, risk tier, and recommended loan terms.
 ---
 

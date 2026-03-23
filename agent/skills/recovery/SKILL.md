@@ -1,5 +1,5 @@
 ---
-name: sentinel_recovery
+name: neurvinial_recovery
 description: Handle overdue loans. Send reminders, escalate to liquidation, and blacklist serial defaulters.
 ---
 

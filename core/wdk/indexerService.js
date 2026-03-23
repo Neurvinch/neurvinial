@@ -4,8 +4,8 @@
 // Integrates with Tether WDK Indexer API for real on-chain data.
 // Provides: transaction history, balance verification, repayment detection.
 //
-// Base URL: https://wdk-api.tether.io
-// Auth: x-api-key header
+// Primary: WDK Indexer API (https://wdk-api.tether.io)
+// Fallback: Etherscan API for Sepolia testnet
 //
 // SRD Requirements:
 // - FR-ID-03: Persist on-chain transaction history per DID
@@ -18,8 +18,15 @@ const config = require('../config');
 // ============================================
 // Configuration
 // ============================================
-const INDEXER_BASE_URL = 'https://wdk-api.tether.io'
-const INDEXER_API_KEY = 'c237be9d1b355ffac7a3eaf0442ff49643aac565b7217992aa50b60fc30c5ab7';
+const INDEXER_BASE_URL = process.env.WDK_INDEXER_URL || 'https://wdk-api.tether.io';
+const INDEXER_API_KEY = process.env.WDK_INDEXER_API_KEY || 'c237be9d1b355ffac7a3eaf0442ff49643aac565b7217992aa50b60fc30c5ab7';
+
+// Etherscan API (fallback for Sepolia)
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || 'YourEtherscanAPIKey';
+const ETHERSCAN_SEPOLIA_URL = 'https://api-sepolia.etherscan.io/api';
+
+// USDT Contract on Sepolia
+const USDT_CONTRACT_SEPOLIA = '0xd077a400968890eacc75cdc901f0356c943e4fdb';
 
 // Chain identifiers
 const CHAIN_IDS = {
@@ -37,7 +44,7 @@ const TOKEN_IDS = {
 };
 
 // ============================================
-// HTTP Client
+// HTTP Clients
 // ============================================
 const indexerClient = axios.create({
   baseURL: INDEXER_BASE_URL,
@@ -48,13 +55,18 @@ const indexerClient = axios.create({
   }
 });
 
+const etherscanClient = axios.create({
+  baseURL: ETHERSCAN_SEPOLIA_URL,
+  timeout: 15000
+});
+
 // Request logging
-indexerClient.interceptors.request.use((config) => {
+indexerClient.interceptors.request.use((cfg) => {
   logger.debug('WDK Indexer Request', {
-    method: config.method,
-    url: config.url
+    method: cfg.method,
+    url: cfg.url
   });
-  return config;
+  return cfg;
 });
 
 // Response logging
@@ -67,7 +79,7 @@ indexerClient.interceptors.response.use(
     return response;
   },
   (error) => {
-    logger.error('WDK Indexer Error', {
+    logger.warn('WDK Indexer Error (will try fallback)', {
       status: error.response?.status,
       message: error.message,
       url: error.config?.url
@@ -77,12 +89,59 @@ indexerClient.interceptors.response.use(
 );
 
 // ============================================
+// Helper: Normalize address
+// ============================================
+function normalizeAddress(address) {
+  if (!address) return '';
+  return address.toLowerCase();
+}
+
+// ============================================
+// Etherscan Fallback: Get Token Transfers
+// ============================================
+async function getTokenTransfersEtherscan(address) {
+  try {
+    const response = await etherscanClient.get('', {
+      params: {
+        module: 'account',
+        action: 'tokentx',
+        contractaddress: USDT_CONTRACT_SEPOLIA,
+        address: normalizeAddress(address),
+        page: 1,
+        offset: 100,
+        sort: 'desc',
+        apikey: ETHERSCAN_API_KEY
+      }
+    });
+
+    if (response.data?.status === '1' && response.data?.result) {
+      // Convert Etherscan format to our standard format
+      return response.data.result.map(tx => ({
+        hash: tx.hash,
+        from: tx.from?.toLowerCase(),
+        to: tx.to?.toLowerCase(),
+        value: tx.value,
+        amount: parseFloat(tx.value) / 1e6, // USDT has 6 decimals
+        timestamp: new Date(parseInt(tx.timeStamp) * 1000).toISOString(),
+        blockNumber: tx.blockNumber
+      }));
+    }
+
+    return [];
+  } catch (error) {
+    logger.warn('Etherscan fallback failed', { error: error.message });
+    return [];
+  }
+}
+
+// ============================================
 // Token Transfers API
 // ============================================
 
 /**
  * Get token transfer history for an address.
- * Endpoint: GET /api/v1/{chain}/{token}/{address}/token-transfers
+ * Primary: WDK Indexer API
+ * Fallback: Etherscan API (for Sepolia)
  *
  * @param {string} address - Wallet address
  * @param {object} options - Query options
@@ -98,31 +157,45 @@ async function getTokenTransfers(address, options = {}) {
     endDate
   } = options;
 
+  const normalizedAddress = normalizeAddress(address);
+
+  // Try WDK Indexer first
   try {
     const params = { limit, offset };
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;
 
     const response = await indexerClient.get(
-      `/api/v1/${chain}/${token}/${address}/token-transfers`,
+      `/api/v1/${chain}/${token}/${normalizedAddress}/token-transfers`,
       { params }
     );
 
-    return response.data?.transfers || response.data || [];
-  } catch (error) {
-    logger.error('Failed to get token transfers', {
-      address,
-      error: error.message
+    const transfers = response.data?.transfers || response.data || [];
+    if (transfers.length > 0) {
+      logger.debug('Got transfers from WDK Indexer', { count: transfers.length });
+      return transfers;
+    }
+  } catch (wdkError) {
+    logger.warn('WDK Indexer failed, trying Etherscan fallback', {
+      address: normalizedAddress,
+      error: wdkError.message
     });
-
-    // Return empty array on error (graceful degradation)
-    return [];
   }
+
+  // Fallback to Etherscan for Sepolia
+  if (chain === 'ethereum-sepolia' || chain === CHAIN_IDS.sepolia) {
+    logger.info('Using Etherscan fallback for token transfers');
+    return await getTokenTransfersEtherscan(normalizedAddress);
+  }
+
+  // No fallback available for other chains
+  return [];
 }
 
 /**
- * Get USDT token balance for an address via Indexer API.
- * Endpoint: GET /api/v1/{chain}/{token}/{address}/token-balances
+ * Get USDT token balance for an address.
+ * Primary: WDK Indexer API
+ * Fallback: Etherscan API (for Sepolia)
  *
  * @param {string} address - Wallet address
  * @param {object} options - Query options
@@ -134,36 +207,71 @@ async function getTokenBalance(address, options = {}) {
     token = TOKEN_IDS.USDT
   } = options;
 
+  const normalizedAddress = normalizeAddress(address);
+
+  // Try WDK Indexer first
   try {
     const response = await indexerClient.get(
-      `/api/v1/${chain}/${token}/${address}/token-balances`
+      `/api/v1/${chain}/${token}/${normalizedAddress}/token-balances`
     );
 
     const balance = response.data?.balance || '0';
     const balanceNumber = parseFloat(balance) / 1e6; // USDT has 6 decimals
 
     return {
-      address,
+      address: normalizedAddress,
       token,
       chain,
       raw: balance,
       balance: balanceNumber
     };
-  } catch (error) {
-    logger.error('Failed to get token balance via indexer', {
-      address,
-      error: error.message
+  } catch (wdkError) {
+    logger.warn('WDK balance check failed, trying Etherscan fallback', {
+      address: normalizedAddress,
+      error: wdkError.message
     });
-
-    return {
-      address,
-      token,
-      chain,
-      raw: '0',
-      balance: 0,
-      error: error.message
-    };
   }
+
+  // Fallback to Etherscan for Sepolia
+  if (chain === 'ethereum-sepolia' || chain === CHAIN_IDS.sepolia) {
+    try {
+      const response = await etherscanClient.get('', {
+        params: {
+          module: 'account',
+          action: 'tokenbalance',
+          contractaddress: USDT_CONTRACT_SEPOLIA,
+          address: normalizedAddress,
+          tag: 'latest',
+          apikey: ETHERSCAN_API_KEY
+        }
+      });
+
+      if (response.data?.status === '1') {
+        const rawBalance = response.data.result || '0';
+        const balanceNumber = parseFloat(rawBalance) / 1e6;
+
+        return {
+          address: normalizedAddress,
+          token,
+          chain,
+          raw: rawBalance,
+          balance: balanceNumber,
+          source: 'etherscan'
+        };
+      }
+    } catch (etherscanError) {
+      logger.warn('Etherscan balance fallback failed', { error: etherscanError.message });
+    }
+  }
+
+  return {
+    address: normalizedAddress,
+    token,
+    chain,
+    raw: '0',
+    balance: 0,
+    error: 'Could not fetch balance'
+  };
 }
 
 /**
@@ -224,76 +332,149 @@ async function verifyTransaction(txHash, expected = {}) {
     chain = CHAIN_IDS[config.wdk?.network] || CHAIN_IDS.sepolia
   } = expected;
 
+  const normalizedFrom = from ? normalizeAddress(from) : null;
+  const normalizedTo = to ? normalizeAddress(to) : null;
+
+  // Try WDK Indexer first
   try {
-    // Get transaction details from indexer
     const response = await indexerClient.get(
       `/api/v1/${chain}/transactions/${txHash}`
     );
 
     const tx = response.data;
-
-    if (!tx) {
-      return {
-        verified: false,
-        reason: 'Transaction not found',
-        txHash
-      };
+    if (tx) {
+      return verifyTxData(tx, { from: normalizedFrom, to: normalizedTo, minAmount, txHash });
     }
-
-    // Verify sender
-    if (from && tx.from?.toLowerCase() !== from.toLowerCase()) {
-      return {
-        verified: false,
-        reason: `Sender mismatch: expected ${from}, got ${tx.from}`,
-        txHash,
-        transaction: tx
-      };
-    }
-
-    // Verify recipient
-    if (to && tx.to?.toLowerCase() !== to.toLowerCase()) {
-      return {
-        verified: false,
-        reason: `Recipient mismatch: expected ${to}, got ${tx.to}`,
-        txHash,
-        transaction: tx
-      };
-    }
-
-    // Verify amount
-    if (minAmount) {
-      const txAmount = parseFloat(tx.amount || tx.value || '0') / 1e6;
-      if (txAmount < minAmount) {
-        return {
-          verified: false,
-          reason: `Amount too low: expected ${minAmount}, got ${txAmount}`,
-          txHash,
-          transaction: tx
-        };
-      }
-    }
-
-    return {
-      verified: true,
+  } catch (wdkError) {
+    logger.warn('WDK TX verification failed, trying Etherscan', {
       txHash,
-      transaction: tx,
-      amount: parseFloat(tx.amount || tx.value || '0') / 1e6,
-      from: tx.from,
-      to: tx.to,
-      timestamp: tx.timestamp || tx.blockTimestamp
-    };
-  } catch (error) {
-    logger.error('Transaction verification failed', {
-      txHash,
-      error: error.message
+      error: wdkError.message
     });
+  }
 
+  // Fallback to Etherscan for Sepolia
+  if (chain === 'ethereum-sepolia' || chain === CHAIN_IDS.sepolia) {
+    try {
+      const response = await etherscanClient.get('', {
+        params: {
+          module: 'proxy',
+          action: 'eth_getTransactionReceipt',
+          txhash: txHash,
+          apikey: ETHERSCAN_API_KEY
+        }
+      });
+
+      if (response.data?.result) {
+        const receipt = response.data.result;
+
+        // Also get the transaction for value
+        const txResponse = await etherscanClient.get('', {
+          params: {
+            module: 'proxy',
+            action: 'eth_getTransactionByHash',
+            txhash: txHash,
+            apikey: ETHERSCAN_API_KEY
+          }
+        });
+
+        const txData = txResponse.data?.result || {};
+
+        // For token transfers, we need to check logs
+        // Look for USDT Transfer event in logs
+        let transferAmount = 0;
+        let transferFrom = txData.from?.toLowerCase();
+        let transferTo = '';
+
+        if (receipt.logs && receipt.logs.length > 0) {
+          for (const log of receipt.logs) {
+            // USDT Transfer event topic
+            if (log.topics && log.topics[0] === '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef') {
+              if (log.address?.toLowerCase() === USDT_CONTRACT_SEPOLIA.toLowerCase()) {
+                transferFrom = '0x' + log.topics[1]?.slice(26);
+                transferTo = '0x' + log.topics[2]?.slice(26);
+                transferAmount = parseInt(log.data, 16) / 1e6;
+                break;
+              }
+            }
+          }
+        }
+
+        const tx = {
+          hash: txHash,
+          from: transferFrom,
+          to: transferTo,
+          amount: transferAmount,
+          status: receipt.status === '0x1' ? 'success' : 'failed',
+          source: 'etherscan'
+        };
+
+        return verifyTxData(tx, { from: normalizedFrom, to: normalizedTo, minAmount, txHash });
+      }
+    } catch (etherscanError) {
+      logger.warn('Etherscan TX verification failed', { error: etherscanError.message });
+    }
+  }
+
+  return {
+    verified: false,
+    reason: 'Could not verify transaction - API unavailable',
+    txHash
+  };
+}
+
+// Helper function to verify transaction data
+function verifyTxData(tx, { from, to, minAmount, txHash }) {
+  if (!tx) {
     return {
       verified: false,
-      reason: `Verification error: ${error.message}`,
+      reason: 'Transaction not found',
       txHash
     };
   }
+
+  // Verify sender
+  if (from && tx.from?.toLowerCase() !== from.toLowerCase()) {
+    return {
+      verified: false,
+      reason: `Sender mismatch: expected ${from}, got ${tx.from}`,
+      txHash,
+      transaction: tx
+    };
+  }
+
+  // Verify recipient
+  if (to && tx.to?.toLowerCase() !== to.toLowerCase()) {
+    return {
+      verified: false,
+      reason: `Recipient mismatch: expected ${to}, got ${tx.to}`,
+      txHash,
+      transaction: tx
+    };
+  }
+
+  // Verify amount
+  if (minAmount) {
+    const txAmount = parseFloat(tx.amount || tx.value || '0');
+    if (txAmount < minAmount) {
+      return {
+        verified: false,
+        reason: `Amount too low: expected ${minAmount}, got ${txAmount}`,
+        txHash,
+        transaction: tx
+      };
+    }
+  }
+
+  return {
+    verified: true,
+    txHash,
+    transaction: tx,
+    amount: parseFloat(tx.amount || tx.value || '0'),
+    from: tx.from,
+    to: tx.to,
+    timestamp: tx.timestamp || tx.blockTimestamp,
+    source: tx.source || 'wdk'
+  };
 }
 
 /**
