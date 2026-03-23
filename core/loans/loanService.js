@@ -266,20 +266,32 @@ async function processRepayment(loanId, repaymentTxHash, options = {}) {
   }
 
   const agent = await Agent.findOne({ did: loan.borrowerDid });
+  const treasuryAddress = await walletManager.getSentinelAddress();
 
   // =========================================================
-  // ON-CHAIN VERIFICATION (if TX hash provided)
+  // CRITICAL: Block if same TX as disbursement
+  // =========================================================
+  if (repaymentTxHash && loan.disbursementTxHash) {
+    if (repaymentTxHash.toLowerCase() === loan.disbursementTxHash.toLowerCase()) {
+      const err = new Error('Invalid TX: This is the disbursement transaction, not a repayment. You must send USDT TO the treasury, not use the TX where we sent to you.');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  // =========================================================
+  // ON-CHAIN VERIFICATION (REQUIRED if TX hash provided)
   // =========================================================
   let verificationResult = null;
   if (repaymentTxHash && repaymentTxHash.startsWith('0x') && !skipVerification) {
     try {
       const indexerService = require('../wdk/indexerService');
-      const treasuryAddress = await walletManager.getSentinelAddress();
 
-      // Verify the transaction on-chain
+      // Verify the transaction on-chain - MUST be FROM borrower TO treasury
       verificationResult = await indexerService.verifyTransaction(repaymentTxHash, {
-        to: treasuryAddress,
-        minAmount: loan.totalDue * 0.99 // Allow 1% tolerance
+        from: agent.walletAddress,  // CRITICAL: Must be from borrower
+        to: treasuryAddress,         // CRITICAL: Must be to treasury
+        minAmount: loan.totalDue * 0.95 // Allow 5% tolerance for gas/fees
       });
 
       logger.info('On-chain TX verification', {
@@ -289,25 +301,37 @@ async function processRepayment(loanId, repaymentTxHash, options = {}) {
         reason: verificationResult.reason
       });
 
-      // If verification failed, still allow but log warning
+      // BLOCK if verification failed
       if (!verificationResult.verified) {
-        logger.warn('TX verification failed but proceeding', {
-          loanId,
-          reason: verificationResult.reason
-        });
+        const err = new Error(`TX verification failed: ${verificationResult.reason}. Make sure you sent USDT FROM your wallet (${agent.walletAddress}) TO the treasury (${treasuryAddress}).`);
+        err.statusCode = 400;
+        err.verificationResult = verificationResult;
+        throw err;
       }
     } catch (verifyErr) {
+      // If it's our verification error, rethrow it
+      if (verifyErr.statusCode === 400) {
+        throw verifyErr;
+      }
+
+      // For indexer API errors (404, network issues), provide guidance
       logger.warn('TX verification unavailable', { error: verifyErr.message });
-      // Continue without verification - don't block repayment
+      const err = new Error(`Cannot verify TX on-chain: ${verifyErr.message}. Please ensure the TX is confirmed on Etherscan and try again in a few minutes.`);
+      err.statusCode = 503;
+      throw err;
     }
+  } else if (!repaymentTxHash || !repaymentTxHash.startsWith('0x')) {
+    // No valid TX hash provided
+    const err = new Error('Valid transaction hash required. Send USDT to the treasury and provide the TX hash from Etherscan.');
+    err.statusCode = 400;
+    throw err;
   }
 
   // Record the repayment transaction
-  const txHashToUse = repaymentTxHash || `0xREPAY_${Date.now().toString(16)}`;
   const tx = new Transaction({
-    txHash: txHashToUse,
+    txHash: repaymentTxHash,
     from: agent.walletAddress,
-    to: await walletManager.getSentinelAddress(),
+    to: treasuryAddress,
     amount: loan.totalDue,
     type: 'repayment',
     loanId: loan.loanId,
@@ -320,7 +344,7 @@ async function processRepayment(loanId, repaymentTxHash, options = {}) {
 
   // Update loan status
   loan.status = LOAN_STATUSES.REPAID;
-  loan.repaymentTxHash = txHashToUse;
+  loan.repaymentTxHash = repaymentTxHash;
   loan.repaidAt = new Date();
   await loan.save();
 
