@@ -78,7 +78,7 @@ You're looking at:
 
 ---
 
-## 🎯 30-Second "WOW" Demo for Judges
+## 🎯 Basic Flow
 
 ### **→ STEP 1:** Open Telegram Bot (No Setup Required)
 ```
@@ -1364,7 +1364,7 @@ neurvinial/
 
 ---
 
-## 🎉 What Makes This a Winning Project
+## 🎉 What Makes This a Unique Project
 
 ### 1️⃣ **It Actually Works**
 Click any Etherscan link in the docs. See real transactions. No smoke, no mirrors.
@@ -1560,7 +1560,7 @@ curl http://localhost:3000/agents/did:test:agent1
 
 ## 👥 Team
 
-### Fazeh (@fazehfazeh)
+### Naveen Pandian (@Neurvinch)
 **Full-Stack Blockchain Engineer**
 - 🏗️ Architected entire system
 - ⛓️ Integrated Tether WDK + ERC-4337
@@ -1593,8 +1593,8 @@ MIT License - See LICENSE file
 - 🤖 **Telegram Bot:** https://t.me/neurvinial_bot
 - 💰 **Treasury (Etherscan):** https://sepolia.etherscan.io/address/0x731e1629DE770363794b4407105321d04941fBCC
 - 📚 **API Docs:** https://neurvinial.onrender.com/api-docs
-- 🐙 **GitHub:** https://github.com/fazehfazeh/neurvinial
-- 📧 **Contact:** fazeh@example.com
+- 🐙 **GitHub:** https://github.com/Neurvinch/neurvinial
+- 📧 **Contact:** npandian515@gmail.com
 
 ---
 
@@ -1617,6 +1617,5 @@ MIT License - See LICENSE file
 [![Powered by OpenClaw](https://img.shields.io/badge/Powered_by-OpenClaw_AI-ff6b6b?style=for-the-badge)](https://openclaw.io)
 [![ERC-4337](https://img.shields.io/badge/ERC--4337-Account_Abstraction-4a90e2?style=for-the-badge)](https://eips.ethereum.org/EIPS/eip-4337)
 
-**Made with 💙 for the autonomous agent economy**
 
 </div>
