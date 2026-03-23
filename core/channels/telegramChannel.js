@@ -200,7 +200,7 @@ async function handleStatus(msg) {
   }
 
   try {
-    const result = await invokeSkill('sentinel_credit', {
+    const result = await invokeSkill('neurvinial_credit', {
       did: context.did,
       action: 'assess_creditworthiness'
     });
@@ -282,7 +282,7 @@ Or just say: "I need 500 dollars"
 
   try {
     // Evaluate loan request
-    const result = await invokeSkill('sentinel_lending', {
+    const result = await invokeSkill('neurvinial_lending', {
       did: context.did,
       amount,
       creditScore: context.creditScore,

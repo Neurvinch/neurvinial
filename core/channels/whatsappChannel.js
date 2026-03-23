@@ -225,7 +225,7 @@ const handleWhatsAppStatus = async (phoneNumber) => {
   }
 
   try {
-    const result = await invokeSkill('sentinel_credit', {
+    const result = await invokeSkill('neurvinial_credit', {
       did: context.did,
       action: 'assess_creditworthiness'
     });
@@ -265,7 +265,7 @@ const handleWhatsAppRequest = async (phoneNumber, amount) => {
   }
 
   try {
-    const result = await invokeSkill('sentinel_lending', {
+    const result = await invokeSkill('neurvinial_lending', {
       did: context.did,
       amount: parsedAmount,
       creditScore: context.creditScore,
