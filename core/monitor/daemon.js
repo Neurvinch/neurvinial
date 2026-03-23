@@ -15,6 +15,7 @@ const { Loan, Agent } = require('../models');
 const loanService = require('../loans/loanService');
 const { LOAN_STATUSES } = require('../utils/constants');
 const logger = require('../config/logger');
+const walletManager = require('../wdk/walletManager');
 
 // Import telegram bot lazily (may not be configured yet)
 let telegramBot = null;
@@ -28,6 +29,9 @@ function getTelegramBot() {
   }
   return telegramBot;
 }
+
+// Track last checked balance to detect new incoming transfers
+let lastKnownBalance = null;
 
 // ============================================
 // Internal state (closure for singleton pattern)
@@ -72,6 +76,7 @@ function stop() {
 
 /**
  * Main check cycle: scan all active loans and take action.
+ * Also checks for on-chain repayments autonomously.
  */
 async function checkAllLoans() {
   const now = new Date();
@@ -85,8 +90,112 @@ async function checkAllLoans() {
 
   logger.debug(`Monitor checking ${activeLoans.length} active loan(s)`);
 
+  // Check for on-chain repayments FIRST (autonomous detection)
+  await checkForRepayments(activeLoans);
+
+  // Then check due dates and send alerts
   for (const loan of activeLoans) {
     await checkLoan(loan, now);
+  }
+}
+
+/**
+ * Check for on-chain repayments by monitoring treasury USDT balance.
+ * If balance increased, match it against outstanding loans.
+ * This makes repayment detection autonomous (no /repay command needed)!
+ */
+async function checkForRepayments(activeLoans) {
+  try {
+    // Check if WDK is initialized
+    if (!walletManager.isInitialized()) {
+      logger.debug('WDK not initialized - skipping on-chain repayment check');
+      return;
+    }
+
+    // Get current treasury balance
+    const currentBalance = await walletManager.getSentinelUSDTBalance();
+    const currentAmount = currentBalance.balance;
+
+    // First run - just store the balance
+    if (lastKnownBalance === null) {
+      lastKnownBalance = currentAmount;
+      return;
+    }
+
+    // Check if balance increased (incoming transfer)
+    const balanceIncrease = currentAmount - lastKnownBalance;
+
+    if (balanceIncrease > 0.01) { // Ignore dust (< 1 cent)
+      logger.info('Treasury balance increased - checking for loan repayments', {
+        previousBalance: lastKnownBalance,
+        currentBalance: currentAmount,
+        increase: balanceIncrease
+      });
+
+      // Try to match balance increase to outstanding loans
+      await matchIncomingTransferToLoans(balanceIncrease, activeLoans);
+    }
+
+    // Update last known balance
+    lastKnownBalance = currentAmount;
+
+  } catch (error) {
+    logger.error('Failed to check for on-chain repayments', { error: error.message });
+  }
+}
+
+/**
+ * Match an incoming USDT transfer to outstanding loans.
+ * Strategy: Find loan where totalDue ≈ transfer amount (within 1% tolerance)
+ */
+async function matchIncomingTransferToLoans(transferAmount, activeLoans) {
+  const TOLERANCE = 0.01; // 1% tolerance for rounding errors
+
+  for (const loan of activeLoans) {
+    const expectedAmount = loan.totalDue || loan.amount;
+    const difference = Math.abs(transferAmount - expectedAmount);
+    const percentDiff = difference / expectedAmount;
+
+    // Match found!
+    if (percentDiff < TOLERANCE) {
+      logger.info('Matched incoming transfer to loan - auto-marking as repaid!', {
+        loanId: loan.loanId,
+        expectedAmount,
+        receivedAmount: transferAmount,
+        borrower: loan.borrowerDid
+      });
+
+      try {
+        // Mark loan as repaid (same as /repay command)
+        const result = await loanService.markRepaid(loan.loanId);
+
+        // Send confirmation via Telegram
+        const bot = getTelegramBot();
+        if (bot) {
+          await bot.sendAlert(
+            `✅ **REPAYMENT DETECTED ON-CHAIN!**\n\n` +
+            `**Loan:** ${loan.loanId}\n` +
+            `**Borrower:** ${loan.borrowerDid}\n` +
+            `**Amount:** ${transferAmount.toFixed(2)} USDT\n` +
+            `**Status:** ${result.wasOnTime ? 'ON-TIME ⏰' : 'LATE ⚠️'}\n` +
+            `**Credit Score:** ${result.agent.creditScore} (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})\n` +
+            `**Tier:** ${result.agent.tier}\n\n` +
+            `🎉 Autonomous repayment detection working!`
+          );
+        }
+
+        logger.info('Loan auto-repaid successfully', { loanId: loan.loanId });
+
+        // Found a match - stop looking
+        break;
+
+      } catch (error) {
+        logger.error('Failed to auto-mark loan as repaid', {
+          loanId: loan.loanId,
+          error: error.message
+        });
+      }
+    }
   }
 }
 
