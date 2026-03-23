@@ -689,57 +689,127 @@ async function handleRepay(msg) {
     // Calculate totalDue if missing (fallback to amount + interest)
     let repaymentAmount = loan.totalDue;
     if (!repaymentAmount || repaymentAmount <= 0) {
-      // Calculate from amount + interest
       const interest = loan.interestAccrued || (loan.amount * (loan.apr || 0.05) * (30 / 365));
       repaymentAmount = parseFloat((loan.amount + interest).toFixed(2));
-
-      // Also fix the loan record in database
       loan.totalDue = repaymentAmount;
       await loan.save();
-      logger.info('Fixed missing totalDue on loan', { loanId: loan.loanId, totalDue: repaymentAmount });
     }
 
     // Extract TX hash from command (if provided)
     const txHashMatch = text.match(/0x[a-fA-F0-9]{64}/);
+    const loanId = loan.loanId || loan._id.toString();
 
-    if (!txHashMatch) {
-      // Show instructions to repay on-chain
-      const loanId = loan.loanId || loan._id.toString();
-      const message = `💳 *Repay Your Loan On-Chain*
+    // Check for "auto" or "check" command (auto-detect repayment)
+    if (text.toLowerCase().includes('auto') || text.toLowerCase().includes('check')) {
+      sendMessage(chatId, '🔍 *Checking for on-chain repayment...*\n\nScanning treasury for incoming transfers...');
 
-📋 **Loan Details:**
-💰 Amount to repay: **$${repaymentAmount} USDT**
-🆔 Loan ID: ${loanId.substring(0, 16)}...
-📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
+      try {
+        const indexerService = require('../wdk/indexerService');
 
-⛓️ **How to Repay:**
+        // Check for repayment to treasury
+        const detection = await indexerService.detectRepayment(
+          context.walletAddress,
+          treasuryAddress,
+          repaymentAmount,
+          loan.disbursedAt || loan.createdAt
+        );
 
-**Step 1:** Send **${repaymentAmount} USDT** on-chain to:
+        if (detection.detected) {
+          // Auto-process repayment!
+          const loanService = require('../loans/loanService');
+          const result = await loanService.processRepayment(loanId, detection.txHash);
+
+          context.creditScore = result.newCreditScore;
+          context.tier = result.newTier;
+          userContexts.set(`tg_${chatId}`, context);
+
+          const message = `🎉 *REPAYMENT AUTO-DETECTED!*
+
+✅ Found your on-chain payment!
+
+💰 **Amount:** $${detection.amount?.toFixed(2) || repaymentAmount} USDT
+⛓️ **TX Hash:** \`${detection.txHash.substring(0, 20)}...\`
+🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${detection.txHash})
+
+📈 **Credit Updated:**
+• Score: ${result.newCreditScore}/100 (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})
+• Tier: ${result.newTier}
+${result.newTier !== context.tier ? `\n🏆 **UPGRADED!** ${context.tier} → ${result.newTier}` : ''}
+
+⚡ *No manual /repay needed - we detected it automatically!*
+
+💡 Send /status to see your profile`;
+
+          sendMessage(chatId, message);
+        } else {
+          sendMessage(chatId, `❌ *No Repayment Found*
+
+We scanned for transfers from your wallet to treasury but found none.
+
+📋 **What you need to do:**
+
+1️⃣ Send **$${repaymentAmount} USDT** to:
 \`${treasuryAddress}\`
-(Click to copy address ☝️)
 
-**Step 2:** Get your transaction hash from Etherscan
+2️⃣ Wait 1-2 minutes for confirmation
 
-**Step 3:** Send it here:
-\`/repay 0xYourTxHashHere\`
+3️⃣ Then either:
+   • Send \`/repay auto\` again (we'll detect it)
+   • OR send \`/repay 0xYourTxHash\`
 
-**Example:**
-\`/repay 0xabc123def456...\`
+🔗 *Treasury Etherscan:*
+https://sepolia.etherscan.io/address/${treasuryAddress}
 
-🔗 **Need USDT?**
-Your wallet: \`${context.walletAddress || 'Not available'}\`
+💡 Make sure you send from wallet: \`${context.walletAddress?.substring(0, 20) || 'unknown'}...\``);
+        }
+      } catch (detectErr) {
+        logger.error('Auto-detect repayment failed', { error: detectErr.message });
+        sendMessage(chatId, `❌ Auto-detection unavailable: ${detectErr.message}\n\nPlease use manual repayment:\n\`/repay 0xYourTxHash\``);
+      }
+      return;
+    }
 
-💡 **Tip:** Repaying on-time improves your credit score by +5 points!
+    // No TX hash provided - show simplified instructions
+    if (!txHashMatch) {
+      const message = `💳 *Repay Your $${repaymentAmount} USDT Loan*
 
-⚠️ **NO MOCKS**: This requires a REAL blockchain transaction.`;
+━━━━━━━━━━━━━━━━━━━━━━
+
+📍 **Send USDT to:**
+\`${treasuryAddress}\`
+_(tap to copy)_
+
+💰 **Amount:** $${repaymentAmount} USDT
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 **EASY OPTIONS:**
+
+**Option 1 - Auto Detect** ⭐
+After sending USDT:
+\`/repay auto\`
+_We'll find your TX automatically!_
+
+**Option 2 - Manual TX Hash**
+\`/repay 0xYourTxHash\`
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 **Quick Links:**
+• [Treasury on Etherscan](https://sepolia.etherscan.io/address/${treasuryAddress})
+• Loan ID: \`${loanId.substring(0, 12)}...\`
+• Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : '30 days'}
+
+💡 *Repaying on-time = +5 credit points!*`;
 
       sendMessage(chatId, message);
       return;
     }
 
-    // Real repayment with TX hash
+    // Real repayment with TX hash - VERIFY ON-CHAIN
     const txHash = txHashMatch[0];
-    const loanId = loan.loanId || loan._id.toString();
+
+    sendMessage(chatId, `🔍 *Verifying TX on-chain...*\n\nChecking: \`${txHash.substring(0, 20)}...\``);
 
     logger.info('Processing on-chain repayment', {
       loanId,
@@ -749,7 +819,27 @@ Your wallet: \`${context.walletAddress || 'Not available'}\`
     });
 
     try {
-      // Use loan service to process repayment (handles LP repayment too)
+      // First verify TX on Etherscan
+      let txVerified = false;
+      let verificationNote = '';
+
+      try {
+        const indexerService = require('../wdk/indexerService');
+        const verification = await indexerService.verifyTransaction(txHash, {
+          to: treasuryAddress,
+          minAmount: repaymentAmount * 0.99 // 1% tolerance
+        });
+
+        txVerified = verification.verified;
+        if (!txVerified) {
+          verificationNote = `\n⚠️ Note: ${verification.reason || 'TX verification pending'}`;
+        }
+      } catch (verifyErr) {
+        logger.warn('TX verification unavailable', { error: verifyErr.message });
+        verificationNote = '\n⚠️ Note: On-chain verification unavailable, proceeding with trust';
+      }
+
+      // Use loan service to process repayment
       const loanService = require('../loans/loanService');
       const result = await loanService.processRepayment(loanId, txHash);
 
@@ -763,22 +853,28 @@ Your wallet: \`${context.walletAddress || 'Not available'}\`
 
       const message = `✅ *Loan Repaid Successfully!*
 
-💰 **Amount Repaid:** $${repaymentAmount} USDT
-⛓️ **TX Hash:** \`${txHash.substring(0, 20)}...\`
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Amount:** $${repaymentAmount} USDT
+⛓️ **TX:** \`${txHash.substring(0, 20)}...\`
 🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${txHash})
+${txVerified ? '✅ **Verified on-chain!**' : ''}${verificationNote}
 
-${wasOnTime ? '⏰ **On-Time!** Great job!' : '⚠️ **Late Payment** - Try to repay on time next time'}
+━━━━━━━━━━━━━━━━━━━━━━
 
-🎉 *Credit Score Updated!*
-**Score Change:** ${scoreChange > 0 ? '+' : ''}${scoreChange} points
-**New Score:** ${result.newCreditScore}/100
-**New Tier:** ${result.newTier}
+${wasOnTime ? '⏰ **ON-TIME!** Great job!' : '⚠️ **Late** - Next time repay before due date'}
+
+📈 **Credit Score Updated:**
+• Change: ${scoreChange > 0 ? '+' : ''}${scoreChange} points
+• New Score: **${result.newCreditScore}/100**
+• Tier: **${result.newTier}**
 ${result.newTier !== context.tier ? `\n🎊 **TIER UPGRADED!** ${context.tier} → ${result.newTier}` : ''}
 
 ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
+━━━━━━━━━━━━━━━━━━━━━━
 
-💡 Send /status to see your updated profile
-💰 Send /request to get another loan`;
+💡 /status - See your updated profile
+💰 /request - Get another loan`;
 
       sendMessage(chatId, message);
 
@@ -796,16 +892,13 @@ ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
       } else if (repaymentError.message.includes('not found')) {
         sendMessage(chatId, `❌ Loan not found. Please try again or contact support.`);
       } else {
-        sendMessage(chatId, `❌ Repayment failed: ${repaymentError.message}\n\n💡 Make sure:
-• You sent REAL USDT to the treasury address
-• You got the TX hash from Etherscan
-• TX hash is exactly 66 characters (0x + 64 hex chars)
-• You're repaying the correct amount`);
+        sendMessage(chatId, `❌ Repayment failed: ${repaymentError.message}\n\nPlease try again or contact support.`);
       }
     }
+
   } catch (error) {
-    logger.error('Repayment lookup failed', { error: error.message, chatId });
-    sendMessage(chatId, `❌ Error checking your loans: ${error.message}\n\nTry again or contact support if the problem persists.`);
+    logger.error('Repay handler error', { error: error.message, chatId });
+    sendMessage(chatId, `❌ Error: ${error.message}`);
   }
 }
 
