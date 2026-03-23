@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Score Engine (Orchestrator)
+// Neurvinial — Score Engine (Orchestrator)
 // ============================================
 // Combines ML (60%) and LLM (40%) scores into a single credit decision.
 // This is the brain of Sentinel's credit assessment.

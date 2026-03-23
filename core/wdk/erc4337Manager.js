@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — WDK ERC-4337 Wallet Manager
+// Neurvinial — WDK ERC-4337 Wallet Manager
 // ============================================
 // Account Abstraction support for gasless transactions.
 // Uses ERC-4337 standard with UserOperations, paymasters, and bundlers.

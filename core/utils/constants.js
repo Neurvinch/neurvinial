@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Risk Tier Constants
+// Neurvinial — Risk Tier Constants
 // ============================================
 // These are the risk tiers from the project specification.
 // Every loan decision references this table.

@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — ML Credit Scoring Model (Pure Node.js)
+// Neurvinial — ML Credit Scoring Model (Pure Node.js)
 // ============================================
 // Logistic regression implemented in pure JavaScript using functions.
 // No Python dependency needed.

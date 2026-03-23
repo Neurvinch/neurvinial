@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Tier Calculator
+// Neurvinial — Tier Calculator
 // ============================================
 // Pure function: score (0-100) → tier object.
 // Isolated so it can be unit tested independently.

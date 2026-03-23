@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — LLM Credit Scorer
+// Neurvinial — LLM Credit Scorer
 // ============================================
 // Uses Groq API to provide fast qualitative credit assessment.
 // This is the "40% qualitative signal" from the scoring engine.

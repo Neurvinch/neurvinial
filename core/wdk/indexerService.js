@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — WDK Indexer Service
+// Neurvinial — WDK Indexer Service
 // ============================================
 // Integrates with Tether WDK Indexer API for real on-chain data.
 // Provides: transaction history, balance verification, repayment detection.
