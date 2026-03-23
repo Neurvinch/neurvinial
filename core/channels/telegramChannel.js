@@ -647,6 +647,7 @@ Send /history to see all loans`;
 async function handleRepay(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  const text = msg.text.trim();
   const context = await getUserContext(chatId, userId);
 
   if (!context.registered) {
@@ -671,50 +672,91 @@ async function handleRepay(msg) {
       return;
     }
 
-    // For demo purposes, mark the oldest loan as repaid
     const loan = activeLoans[0];
-    loan.status = 'repaid';
-    loan.repaidAt = new Date();
-    await loan.save();
+    const treasuryAddress = await walletManager.getSentinelAddress();
 
-    // Improve credit score
-    const agent = await Agent.findOne({ did: context.did });
-    if (agent) {
-      agent.totalRepaid = (agent.totalRepaid || 0) + 1;
-      agent.creditScore = Math.min(100, (agent.creditScore || 50) + 5);
+    // Extract TX hash from command (if provided)
+    const txHashMatch = text.match(/0x[a-fA-F0-9]{64}/);
 
-      // Update tier based on new score
-      if (agent.creditScore >= 80) agent.tier = 'A';
-      else if (agent.creditScore >= 60) agent.tier = 'B';
-      else if (agent.creditScore >= 40) agent.tier = 'C';
-      else agent.tier = 'D';
+    if (!txHashMatch) {
+      // Show instructions to repay on-chain
+      const message = `💳 *Repay Your Loan On-Chain*
 
-      await agent.save();
+📋 **Loan Details:**
+💰 Amount to repay: **$${loan.totalDue || loan.amount} USDT**
+🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
+📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
 
-      // Update context
-      context.creditScore = agent.creditScore;
-      context.tier = agent.tier;
-      userContexts.set(`tg_${chatId}`, context);
+⛓️ **How to Repay:**
+
+**Step 1:** Send **${loan.totalDue || loan.amount} USDT** on-chain to:
+\`${treasuryAddress}\`
+(Click to copy address ☝️)
+
+**Step 2:** Get your transaction hash from Etherscan
+
+**Step 3:** Send it here:
+\`/repay 0xYourTxHashHere\`
+
+**Example:**
+\`/repay 0xabc123def456...\`
+
+🔗 **Need USDT?**
+Your wallet: \`${context.walletAddress || 'Not available'}\`
+
+💡 **Tip:** Repaying on-time improves your credit score by +5 points!
+
+⚠️ **NO MOCKS**: This requires a REAL blockchain transaction.`;
+
+      sendMessage(chatId, message);
+      return;
     }
+
+    // Real repayment with TX hash
+    const txHash = txHashMatch[0];
+
+    logger.info('Processing on-chain repayment', {
+      loanId: loan.loanId,
+      txHash,
+      borrowerDid: context.did
+    });
+
+    // Use loan service to process repayment (handles LP repayment too)
+    const loanService = require('../loans/loanService');
+    const result = await loanService.processRepayment(loan.loanId, txHash);
+
+    // Update context with new credit score
+    context.creditScore = result.newCreditScore;
+    context.tier = result.newTier;
+    userContexts.set(`tg_${chatId}`, context);
+
+    const wasOnTime = result.wasOnTime;
+    const scoreChange = result.creditScoreChange;
 
     const message = `✅ *Loan Repaid Successfully!*
 
-💰 **Amount:** $${loan.amount} USDT
-📅 **Repaid:** ${new Date().toLocaleDateString()}
-🆔 **Loan ID:** ${(loan.loanId || loan._id.toString()).substring(0, 12)}...
+💰 **Amount Repaid:** $${loan.totalDue || loan.amount} USDT
+⛓️ **TX Hash:** \`${txHash.substring(0, 20)}...\`
+🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${txHash})
 
-🎉 *Credit Score Improved!*
-**New Score:** ${agent?.creditScore || 'N/A'}/100
-**New Tier:** ${agent?.tier || 'N/A'}
+${wasOnTime ? '⏰ **On-Time!** Great job!' : '⚠️ **Late Payment** - Try to repay on time next time'}
 
-Keep repaying on time to improve your credit and unlock higher loan amounts!
+🎉 *Credit Score Updated!*
+**Score Change:** ${scoreChange > 0 ? '+' : ''}${scoreChange} points
+**New Score:** ${result.newCreditScore}/100
+**New Tier:** ${result.newTier}
+${result.newTier !== context.tier ? `\n🎊 **TIER UPGRADED!** ${context.tier} → ${result.newTier}` : ''}
 
-💡 Send /status to see your updated credit profile`;
+${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
+
+💡 Send /status to see your updated profile
+💰 Send /request to get another loan`;
 
     sendMessage(chatId, message);
 
   } catch (error) {
-    sendMessage(chatId, `❌ Error: ${error.message}`);
+    logger.error('Repayment failed', { error: error.message, chatId });
+    sendMessage(chatId, `❌ Repayment failed: ${error.message}\n\nMake sure you sent the correct TX hash from a real USDT transfer to the treasury.`);
   }
 }
 
@@ -982,6 +1024,209 @@ async function handleUpgrade(msg) {
 }
 
 /**
+ * /capital - View full capital status (LP pool + AAVE + Treasury)
+ */
+async function handleCapital(msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const capitalService = require('../reallocator/capitalService');
+    const status = await capitalService.getCapitalStatus();
+
+    const message = `🏦 **SENTINEL Capital Overview**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Treasury Reserves:**
+• USDT Balance: $${status.reserves.usdt.toFixed(2)}
+• ETH (Gas): ${status.reserves.eth.toFixed(6)} ETH
+• Address: \`${status.sentinelAddress.substring(0, 10)}...\`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 **Deployed Capital:**
+• Active Loans: ${status.deployed.totalActiveLoans}
+• Capital Deployed: $${status.deployed.capitalDeployed.toFixed(2)}
+• Expected Return: $${status.deployed.expectedReturn.toFixed(2)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🤝 **LP Agent Pool:**
+• Active LP Agents: ${status.lpPool.activeLPAgents}
+• Capital Committed: $${status.lpPool.totalCapitalCommitted.toFixed(2)}
+• Capital Available: $${status.lpPool.totalCapitalAvailable.toFixed(2)}
+• Average APR: ${status.lpPool.averageAPR}
+• Interest Paid to LPs: $${status.lpPool.totalInterestPaidToLPs.toFixed(2)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏛️ **AAVE Yield:**
+• Current Deposit: $${status.aave.currentDeposit.toFixed(2)}
+• Interest Earned: $${status.aave.interestEarned.toFixed(4)}
+• Estimated APY: ${status.aave.estimatedAPY}
+• Status: ${status.aave.status === 'active' ? '✅ Active' : '⏸️ Idle'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 **Performance:**
+• Total Loans Issued: ${status.performance.totalLoansIssued}
+• Total Repaid: ${status.performance.totalRepaid}
+• Total Defaulted: ${status.performance.totalDefaulted}
+• Interest Earned: $${status.performance.interestEarned}
+• Net P&L: $${status.performance.netPnL}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 **Commands:**
+• /lppool - LP Agent pool details
+• /aave - AAVE yield status
+• /treasury - Treasury address & balance`;
+
+    sendMessage(chatId, message);
+  } catch (error) {
+    sendMessage(chatId, `❌ Capital status check failed: ${error.message}`);
+  }
+}
+
+/**
+ * /lppool - LP Agent pool status and management
+ */
+async function handleLPPool(msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const lpAgentManager = require('../capital/lpAgentManager');
+    const lpPool = lpAgentManager.getLPPoolStats();
+    const lpAgents = lpAgentManager.getAllLPAgents();
+
+    let agentList = '';
+    if (lpAgents && lpAgents.length > 0) {
+      for (const lp of lpAgents.slice(0, 5)) {
+        const utilization = lp.maxCapital > 0 ? ((lp.currentDeployed / lp.maxCapital) * 100).toFixed(1) : 0;
+        agentList += `
+• **${lp.name || 'LP Agent'}**
+  💰 Committed: $${lp.maxCapital.toFixed(2)}
+  📊 Deployed: $${lp.currentDeployed.toFixed(2)} (${utilization}%)
+  💵 Earned: $${lp.interestEarned.toFixed(2)}
+  📈 APR: ${(lp.apr * 100).toFixed(1)}%
+`;
+      }
+    } else {
+      agentList = '\n_No LP agents registered yet_';
+    }
+
+    const message = `🤝 **LP Agent Capital Pool**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 **Pool Overview:**
+• Total LP Agents: ${lpPool.activeLPAgents}
+• Total Committed: $${lpPool.totalCapitalCommitted.toFixed(2)}
+• Total Deployed: $${lpPool.totalCapitalDeployed.toFixed(2)}
+• Available Now: $${lpPool.totalCapitalAvailable.toFixed(2)}
+
+💰 **Economics:**
+• Average LP APR: ${(lpPool.averageAPR * 100).toFixed(2)}%
+• Total Interest Paid: $${lpPool.totalInterestPaidToLPs.toFixed(2)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🤖 **LP Agents:**${agentList}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 **How Agent-to-Agent Lending Works:**
+
+1️⃣ LP Agents commit capital at 2% APR
+2️⃣ SENTINEL borrows when treasury is low
+3️⃣ SENTINEL lends to borrowers at 3.5-8% APR
+4️⃣ LP Agents get auto-repaid with interest
+5️⃣ SENTINEL earns the spread (1.5-6%)
+
+✅ **Autonomous:** No human intervention!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📍 **Become an LP Agent:**
+Use the API to register as LP:
+POST /capital/lp/register`;
+
+    sendMessage(chatId, message);
+  } catch (error) {
+    sendMessage(chatId, `❌ LP Pool check failed: ${error.message}`);
+  }
+}
+
+/**
+ * /aave - AAVE yield status and management
+ */
+async function handleAAVE(msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const aaveIntegration = require('../capital/aaveIntegration');
+    const status = await aaveIntegration.getAaveStatus();
+    const opportunities = await aaveIntegration.getYieldOpportunities();
+
+    let oppList = '';
+    if (opportunities && opportunities.length > 0) {
+      for (const opp of opportunities) {
+        const statusIcon = opp.status === 'available' ? '✅' : opp.status === 'internal' ? '🏠' : '⏳';
+        oppList += `\n• ${statusIcon} **${opp.protocol}** (${opp.asset}): ${opp.apy}% APY`;
+      }
+    }
+
+    const message = `🏛️ **AAVE Yield Integration**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 **Current Status:**
+• Network: ${status.network}
+• Pool Address: \`${status.poolAddress.substring(0, 10)}...\`
+• Status: ${status.status === 'active' ? '✅ Active' : '⏸️ Idle'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Your AAVE Position:**
+• Current Deposit: $${status.currentDeposit.toFixed(2)}
+• Total Deposited: $${status.totalDeposited.toFixed(2)}
+• Total Withdrawn: $${status.totalWithdrawn.toFixed(2)}
+• Interest Earned: $${status.interestEarned.toFixed(4)}
+• Estimated APY: ${status.estimatedAPY}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 **Yield Opportunities:**${oppList || '\n_No opportunities available_'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 **How AAVE Integration Works:**
+
+1️⃣ Idle capital sits in treasury
+2️⃣ When > $1000 idle: Deploy to AAVE
+3️⃣ AAVE pays ~4% APY on USDT
+4️⃣ When loans need funding: Withdraw
+5️⃣ Net yield on idle capital!
+
+✅ **Benefit:** Treasury earns while waiting
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📍 **AAVE V3 Resources:**
+• Pool: AAVE V3 Sepolia
+• Token: aUSDT (interest-bearing)
+
+🔗 **Manage via API:**
+• POST /capital/aave/deposit
+• POST /capital/aave/withdraw`;
+
+    sendMessage(chatId, message);
+  } catch (error) {
+    sendMessage(chatId, `❌ AAVE status check failed: ${error.message}`);
+  }
+}
+
+/**
  * /loans or /dashboard - View all your loans
  */
 async function handleLoans(msg) {
@@ -1080,50 +1325,88 @@ async function handleHelp(msg) {
   if (!context.registered) {
     helpText = `🚀 *Welcome to SENTINEL!*
 
-*Get started in 2 steps:*
+*The Autonomous AI Lending Agent*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 *Get started in 2 steps:*
 1️⃣ /register - Create your account & wallet
-2️⃣ /request 300 - Apply for your first loan!
+2️⃣ /request 300 - Get your first loan!
 
-💰 *What you'll get:*
-• Real USDT loans (starting $500 max)
-• ERC-4337 gasless transactions
-• AI credit scoring
-• 30-day loan terms
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚡ *Ready?* Send /register to begin`;
+💰 *What SENTINEL Offers:*
+• Real USDT loans on Ethereum
+• No gas fees (ERC-4337)
+• AI-powered credit scoring
+• 30-day flexible terms
+• Agent-to-agent capital markets
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🧠 *Talk Naturally:*
+Just say things like:
+• "I need 500 bucks"
+• "What can I borrow?"
+• "How do I improve my score?"
+
+⚡ *Ready?* Send /register to begin!`;
   } else {
     const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
     const maxLoan = tierLimits[context.tier] || 500;
 
     helpText = `📊 *SENTINEL Commands* (Tier ${context.tier})
 
-💰 **Your max loan:** $${maxLoan} USDT
+💰 **Your limit:** $${maxLoan} USDT | Score: ${context.creditScore || 50}/100
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🎯 **Quick Actions:**
-• /status - Check credit (Score: ${context.creditScore || 50})
-• /limit - See loan limits & terms
+• /status - Your credit profile
 • /request ${Math.min(maxLoan, 300)} - Apply for loan
-• /loans - View your loan dashboard
+• /loans - Your loan dashboard
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 💰 **Loan Management:**
 • /approve - Disburse pending loan
-• /repay - Mark loan repaid (improves credit!)
-• /history - View loan history
+• /repay 0xTxHash - Repay with TX proof
+• /history - View all loans
+• /limit - See your limits
 
-📈 **Credit Tools:**
-• /tiers - See all credit tiers
-• /upgrade - Tips to improve your score
-• /treasury - Check system treasury
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 **Credit & Tiers:**
+• /tiers - Credit tier breakdown
+• /upgrade - Tips to improve score
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 💳 **Wallet:**
-• /wallet - View your address
-• /balance - Check balance
+• /wallet - Your address
+• /balance - Your balances
 
-🚀 **Tips for Tier ${context.tier}:**
-${context.tier === 'A' ? '🌟 Excellent credit! Max loans up to $5,000 at 3.5% APR' :
-  context.tier === 'B' ? '✅ Good credit! Repay on-time to reach Tier A (3.5% APR)' :
-  context.tier === 'C' ? '📈 Build credit by repaying loans on-time to unlock higher limits' :
-  '❌ Focus on building credit history to qualify for loans'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏦 **Capital & Yield:**
+• /capital - Full capital overview
+• /lppool - LP agent pool status
+• /aave - AAVE yield integration
+• /treasury - System treasury
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚙️ **System:**
+• /health - System health check
+• /help - This message
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🧠 **Natural Language:**
+Just say things like:
+• "I need 500 dollars"
+• "What's my score?"
+• "Show me LP pool"
 
 ⚡ **ERC-4337:** All transfers are gasless!`;
   }
@@ -1230,6 +1513,12 @@ async function handleMessage(msg) {
       await handleTiers(msg);
     } else if (action === 'show_upgrade_tips' || text.startsWith('/upgrade')) {
       await handleUpgrade(msg);
+    } else if (text.startsWith('/capital')) {
+      await handleCapital(msg);
+    } else if (text.startsWith('/lppool') || text.startsWith('/lp')) {
+      await handleLPPool(msg);
+    } else if (text.startsWith('/aave') || text.startsWith('/yield')) {
+      await handleAAVE(msg);
     } else if (text.startsWith('/loans') || text.startsWith('/dashboard')) {
       await handleLoans(msg);
     } else if (action === 'show_help' || text.startsWith('/help')) {
