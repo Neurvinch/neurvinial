@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — OpenClaw-Integrated Channels Router
+// Neurvinial — OpenClaw-Integrated Channels Router
 // ============================================
 // Routes for Telegram and WhatsApp channels using OpenClaw plugin SDK.
 // Channels handle user interactions and invoke OpenClaw skills.

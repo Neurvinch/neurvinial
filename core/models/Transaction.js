@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Transaction Model (MongoDB Schema)
+// Neurvinial — Transaction Model (MongoDB Schema)
 // ============================================
 // Records every on-chain transaction: disbursements, repayments,
 // collateral movements, liquidations, and capital reallocations.

@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Capital API Routes (PRODUCTION ONLY)
+// Neurvinial — Capital API Routes (PRODUCTION ONLY)
 // ============================================
 // GET  /capital/status    — Reserve balance, deployed capital, and yield info
 // GET  /capital/lp-pool   — LP agent pool status
@@ -24,7 +24,7 @@ function requireDB(req, res, next) {
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({
       error: {
-        message: 'Database not connected. SENTINEL requires MongoDB for production operations.',
+        message: 'Database not connected. Neurvinial requires MongoDB for production operations.',
         code: 'DB_NOT_CONNECTED'
       }
     });
