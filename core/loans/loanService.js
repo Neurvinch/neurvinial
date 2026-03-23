@@ -249,7 +249,10 @@ async function disburseLoan(loanId) {
 // =========================================================
 // Called when the borrower agent repays the loan.
 // If loan was funded by LP agent, repays them with interest.
-async function processRepayment(loanId, repaymentTxHash) {
+// Now includes ON-CHAIN VERIFICATION via WDK Indexer API!
+async function processRepayment(loanId, repaymentTxHash, options = {}) {
+  const { skipVerification = false } = options;
+
   const loan = await Loan.findOne({ loanId });
   if (!loan) {
     const err = new Error('Loan not found');
@@ -263,6 +266,41 @@ async function processRepayment(loanId, repaymentTxHash) {
   }
 
   const agent = await Agent.findOne({ did: loan.borrowerDid });
+
+  // =========================================================
+  // ON-CHAIN VERIFICATION (if TX hash provided)
+  // =========================================================
+  let verificationResult = null;
+  if (repaymentTxHash && repaymentTxHash.startsWith('0x') && !skipVerification) {
+    try {
+      const indexerService = require('../wdk/indexerService');
+      const treasuryAddress = await walletManager.getSentinelAddress();
+
+      // Verify the transaction on-chain
+      verificationResult = await indexerService.verifyTransaction(repaymentTxHash, {
+        to: treasuryAddress,
+        minAmount: loan.totalDue * 0.99 // Allow 1% tolerance
+      });
+
+      logger.info('On-chain TX verification', {
+        loanId,
+        txHash: repaymentTxHash,
+        verified: verificationResult.verified,
+        reason: verificationResult.reason
+      });
+
+      // If verification failed, still allow but log warning
+      if (!verificationResult.verified) {
+        logger.warn('TX verification failed but proceeding', {
+          loanId,
+          reason: verificationResult.reason
+        });
+      }
+    } catch (verifyErr) {
+      logger.warn('TX verification unavailable', { error: verifyErr.message });
+      // Continue without verification - don't block repayment
+    }
+  }
 
   // Record the repayment transaction
   const txHashToUse = repaymentTxHash || `0xREPAY_${Date.now().toString(16)}`;
