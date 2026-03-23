@@ -11,6 +11,7 @@ const { invokeSkill } = require('../agent/openclawIntegration');
 const { Agent, Loan } = require('../models');
 const mongoose = require('mongoose');
 const walletManager = require('../wdk/walletManager');
+const loanService = require('../loans/loanService');
 
 // WhatsApp user context tracking
 const whatsappContexts = new Map();
@@ -618,7 +619,7 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
   const context = await getOrCreateWhatsAppContext(phoneNumber);
 
   if (!context.did) {
-    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first.');
+    await sendWhatsAppMessage(phoneNumber, '❌ Please send "register" first.');
     return;
   }
 
@@ -635,7 +636,6 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
     }).sort({ createdAt: 1 });
 
     if (disbursedLoans.length === 0) {
-      // Check if there are pending/approved loans
       const pendingLoans = await Loan.find({
         borrowerDid: context.did,
         status: { $in: ['pending', 'approved'] }
@@ -643,9 +643,9 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
 
       if (pendingLoans.length > 0) {
         const loan = pendingLoans[0];
-        await sendWhatsAppMessage(phoneNumber, `❌ Your loan request is still in ${loan.status} status.\n\nYou need to:\n1. Send "approve" to disburse the loan\n2. Receive USDT in your wallet\n3. Then use "repay" to repay it\n\nSend "approve" to disburse your loan.`);
+        await sendWhatsAppMessage(phoneNumber, `❌ Your loan is still in ${loan.status} status.\n\n1. Send *approve* to disburse\n2. Receive USDT\n3. Then send *repay*`);
       } else {
-        await sendWhatsAppMessage(phoneNumber, '✅ *No Active Loans*\n\nYou have no loans to repay. Send "request 100" to get a loan.');
+        await sendWhatsAppMessage(phoneNumber, '✅ No active loans to repay.\n\nSend *request 100* to get a loan.');
       }
       return;
     }
@@ -653,87 +653,143 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
     const loan = disbursedLoans[0];
     const treasuryAddress = await walletManager.getSentinelAddress();
 
-    // Calculate totalDue if missing (fallback to amount + interest)
+    // Calculate totalDue if missing
     let repaymentAmount = loan.totalDue;
     if (!repaymentAmount || repaymentAmount <= 0) {
       const interest = loan.interestAccrued || (loan.amount * (loan.apr || 0.05) * (30 / 365));
       repaymentAmount = parseFloat((loan.amount + interest).toFixed(2));
-
-      // Fix the loan record
       loan.totalDue = repaymentAmount;
       await loan.save();
-      logger.info('Fixed missing totalDue on loan', { loanId: loan.loanId, totalDue: repaymentAmount });
     }
 
-    // Check if TX hash was provided in the message
-    const txHashMatch = loanIdPart ? loanIdPart.match(/0x[a-fA-F0-9]{64}/) : null;
+    const loanId = loan.loanId || loan._id.toString();
 
-    if (!txHashMatch) {
-      // Show instructions to repay on-chain
-      const instructionMessage = `💳 *Repay Your Loan On-Chain*
+    // Check for "auto" or "check" command - auto-detect repayment
+    if (loanIdPart && (loanIdPart.toLowerCase().includes('auto') || loanIdPart.toLowerCase().includes('check'))) {
+      await sendWhatsAppMessage(phoneNumber, '🔍 *Checking for on-chain repayment...*');
 
-📋 *Loan Details:*
-💰 Amount to repay: *$${repaymentAmount} USDT*
-🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
-📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
+      try {
+        const indexerService = require('../wdk/indexerService');
+        const agent = await Agent.findOne({ did: context.did });
 
-⛓️ *How to Repay:*
+        const detection = await indexerService.detectRepayment(
+          agent?.walletAddress || context.walletAddress,
+          treasuryAddress,
+          repaymentAmount,
+          loan.disbursedAt || loan.createdAt
+        );
 
-*Step 1:* Send *${repaymentAmount} USDT* on-chain to:
-\`${treasuryAddress}\`
+        if (detection.detected) {
+          const result = await loanService.processRepayment(loanId, detection.txHash);
 
-*Step 2:* Get your transaction hash from Etherscan
+          context.creditScore = result.newCreditScore;
+          context.tier = result.newTier;
+          whatsappContexts.set(phoneNumber, context);
 
-*Step 3:* Send it here:
-repay 0xYourTxHashHere
+          await sendWhatsAppMessage(phoneNumber, `🎉 *REPAYMENT AUTO-DETECTED!*
 
-*Example:*
-repay 0xabc123def456...
+✅ Found your payment on-chain!
 
-💡 *Tip:* Repaying on-time improves your credit score by +5 points!
+💰 Amount: $${detection.amount?.toFixed(2) || repaymentAmount} USDT
+⛓️ TX: ${detection.txHash.substring(0, 20)}...
+🔗 https://sepolia.etherscan.io/tx/${detection.txHash}
 
-⚠️ This requires a REAL blockchain transaction.`;
+📈 *Credit Updated:*
+• Score: ${result.newCreditScore}/100 (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})
+• Tier: ${result.newTier}
 
-      await sendWhatsAppMessage(phoneNumber, instructionMessage);
+⚡ No manual repay needed - detected automatically!`);
+        } else {
+          await sendWhatsAppMessage(phoneNumber, `❌ *No Repayment Found*
+
+Send *$${repaymentAmount} USDT* to:
+${treasuryAddress}
+
+Then send *repay auto* again, or:
+*repay 0xYourTxHash*`);
+        }
+      } catch (detectErr) {
+        logger.error('WhatsApp auto-detect failed', { error: detectErr.message });
+        await sendWhatsAppMessage(phoneNumber, `❌ Auto-detection unavailable.\n\nUse: *repay 0xYourTxHash*`);
+      }
       return;
     }
 
-    // Real repayment with TX hash
+    // Check if TX hash was provided
+    const txHashMatch = loanIdPart ? loanIdPart.match(/0x[a-fA-F0-9]{64}/) : null;
+
+    if (!txHashMatch) {
+      // Show simplified instructions
+      await sendWhatsAppMessage(phoneNumber, `💳 *Repay $${repaymentAmount} USDT*
+
+━━━━━━━━━━━━━━━━━━━━━
+
+📍 *Send USDT to:*
+${treasuryAddress}
+
+💰 *Amount:* $${repaymentAmount}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🚀 *EASY OPTIONS:*
+
+*Option 1 - Auto Detect* ⭐
+After sending USDT:
+repay auto
+
+*Option 2 - Manual*
+repay 0xYourTxHash
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🔗 Treasury on Etherscan:
+https://sepolia.etherscan.io/address/${treasuryAddress}
+
+💡 On-time repayment = +5 credit points!`);
+      return;
+    }
+
+    // Process with TX hash
     const txHash = txHashMatch[0];
-    const loanId = loan.loanId || loan._id.toString();
 
-    logger.info('Processing on-chain repayment via WhatsApp', {
-      loanId,
-      txHash,
-      borrowerDid: context.did,
-      loanAmount: loan.totalDue
-    });
+    await sendWhatsAppMessage(phoneNumber, `🔍 *Verifying TX...*\n${txHash.substring(0, 20)}...`);
 
-    // Use loan service to process repayment
-    const loanService = require('../loans/loanService');
+    logger.info('WhatsApp repayment processing', { loanId, txHash });
+
     const result = await loanService.processRepayment(loanId, txHash);
 
-    // Update context with new credit score
     context.creditScore = result.newCreditScore;
     context.tier = result.newTier;
     whatsappContexts.set(phoneNumber, context);
 
-    const wasOnTime = result.wasOnTime;
-    const scoreChange = result.creditScoreChange;
+    await sendWhatsAppMessage(phoneNumber, `✅ *Loan Repaid Successfully!*
 
-    const message = `✅ *Loan Repaid Successfully!*
+━━━━━━━━━━━━━━━━━━━━━
 
-💰 *Amount Repaid:* $${loan.totalDue} USDT
-⛓️ *TX Hash:* ${txHash.substring(0, 20)}...
-🔗 View on Etherscan:
-https://sepolia.etherscan.io/tx/${txHash}
+💰 Amount: $${repaymentAmount} USDT
+⛓️ TX: ${txHash.substring(0, 20)}...
+🔗 https://sepolia.etherscan.io/tx/${txHash}
 
-${wasOnTime ? '⏰ *On-Time!* Great job!' : '⚠️ *Late Payment* - Try to repay on time next time'}
+━━━━━━━━━━━━━━━━━━━━━
 
-🎉 *Credit Score Updated!*
-📈 Score Change: ${scoreChange > 0 ? '+' : ''}${scoreChange} points
-⭐ New Score: ${result.newCreditScore}/100
-🏆 New Tier: ${result.newTier}
+${result.wasOnTime ? '⏰ *ON-TIME!* Great job!' : '⚠️ Late - repay on-time next time'}
+
+📈 *Credit Updated:*
+• Change: ${result.creditScoreChange > 0 ? '+' : ''}${result.creditScoreChange} points
+• Score: *${result.newCreditScore}/100*
+• Tier: *${result.newTier}*
+${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💡 Send *status* for your profile
+💰 Send *request* for another loan`);
+
+  } catch (error) {
+    logger.error('WhatsApp repay error', { error: error.message, phoneNumber });
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}\n\nTry again or contact support.`);
+  }
+};
 ${result.newTier !== context.tier ? `\n🎊 *TIER UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
 
 ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
