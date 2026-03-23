@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — AAVE Protocol Integration
+// Neurvinial — AAVE Protocol Integration
 // ============================================
 // Manages idle capital deployment to AAVE for yield generation.
 //
@@ -324,7 +324,7 @@ async function getYieldOpportunities() {
       minDeposit: 100
     },
     {
-      protocol: 'SENTINEL LP Pool',
+      protocol: 'Neurvinial LP Pool',
       asset: 'USDT',
       apy: 8.0,
       risk: 'medium',

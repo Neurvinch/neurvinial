@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — OpenClaw Agent Integration
+// Neurvinial — OpenClaw Agent Integration
 // ============================================
 // Functional integration with OpenClaw SDK and Groq LLM.
 // Skills are loaded from markdown files and executed via LLM reasoning.
