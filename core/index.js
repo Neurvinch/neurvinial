@@ -170,7 +170,9 @@ async function start() {
     }
 
     // Set up Telegram webhook for production (so bot works 24/7)
-    if (config.server.env === 'production' && config.telegram?.botToken) {
+    // Detect production: either NODE_ENV=production OR running on Render
+    const isProduction = config.server.env === 'production' || process.env.RENDER === 'true' || process.env.RENDER_EXTERNAL_URL;
+    if (isProduction && config.telegram?.botToken) {
       try {
         const serverUrl = process.env.RENDER_EXTERNAL_URL || `https://neurvinial.onrender.com`;
         const webhookResult = await telegramChannel.setupTelegramWebhook(serverUrl);

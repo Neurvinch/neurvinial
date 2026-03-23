@@ -7,7 +7,10 @@ node_modules/
 # Logs
 *.log
 logs/
-*.md
+
+# Allow skill markdown files
+!agent/skills/**/SKILL.md
+
 # ML model artifacts
 *.pkl
 *.joblib
