@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Agent Model (MongoDB Schema)
+// Neurvinial — Agent Model (MongoDB Schema)
 // ============================================
 // Stores agent identity (DID), wallet address, and credit profile.
 // This is the "credit bureau record" for each agent in the economy.

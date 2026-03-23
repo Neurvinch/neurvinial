@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Model Barrel Export
+// Neurvinial — Model Barrel Export
 // ============================================
 // Single import point: const { Agent, Loan, Transaction } = require('../models');
 
