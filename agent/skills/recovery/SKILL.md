@@ -22,7 +22,7 @@ Use this skill when a loan is approaching its due date or has become overdue.
 - Mark loan as defaulted: the monitor daemon handles this automatically
 - Send urgent notification via Telegram
 - Reduce borrower's credit score by 20 points
-- API: `POST {{SENTINEL_API_URL}}/loans/{{loanId}}/repay` (if agent repays late)
+- API: `POST {{Neurvinial_API_URL}}/loans/{{loanId}}/repay` (if agent repays late)
 
 ### T+0 with Collateral
 - Liquidate collateral via WDK wallet transfer

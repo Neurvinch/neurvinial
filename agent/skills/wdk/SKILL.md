@@ -14,7 +14,7 @@ Query the USDT balance of any Ethereum address.
 
 **API Call:**
 ```
-GET {{SENTINEL_API_URL}}/capital/status
+GET {{Neurvinial_API_URL}}/capital/status
 ```
 
 **Response:**
@@ -32,7 +32,7 @@ Transfer USDT from Sentinel's treasury to a borrower.
 
 **API Call:**
 ```
-POST {{SENTINEL_API_URL}}/loans/{{loanId}}/disburse
+POST {{Neurvinial_API_URL}}/loans/{{loanId}}/disburse
 ```
 
 **Response:**
@@ -50,7 +50,7 @@ Generate a new WDK wallet for a registered agent.
 
 **API Call:**
 ```
-POST {{SENTINEL_API_URL}}/agents/register
+POST {{Neurvinial_API_URL}}/agents/register
 Body: { "did": "did:ethr:0x..." }
 ```
 
@@ -101,7 +101,7 @@ Sentinel supports gasless transactions via ERC-4337 account abstraction.
 
 **API (if enabled):**
 ```
-POST {{SENTINEL_API_URL}}/wdk/gasless-transfer
+POST {{Neurvinial_API_URL}}/wdk/gasless-transfer
 Body: {
   "to": "0xRecipient...",
   "amount": 100

@@ -16,7 +16,7 @@ Use this skill when you need to evaluate an agent's creditworthiness before maki
 
 ## How It Works
 
-1. **Fetch agent profile** — Call `GET {{SENTINEL_API_URL}}/agents/{{agent_did}}/score` to get the agent's current credit data.
+1. **Fetch agent profile** — Call `GET {{Neurvinial_API_URL}}/agents/{{agent_did}}/score` to get the agent's current credit data.
 2. **Analyze the response** — The API returns:
    - `creditScore` (0-100)
    - `tier` (A/B/C/D)

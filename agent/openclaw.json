@@ -8,21 +8,21 @@
         "enabled": true,
         "description": "Credit assessment skill - evaluates agent creditworthiness",
         "env": {
-          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}"
+          "Neurvinial_API_URL": "${Neurvinial_API_URL:-http://localhost:3000}"
         }
       },
       "sentinel_lending": {
         "enabled": true,
         "description": "Lending decision skill - processes loan requests autonomously",
         "env": {
-          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}"
+          "Neurvinial_API_URL": "${Neurvinial_API_URL:-http://localhost:3000}"
         }
       },
       "sentinel_recovery": {
         "enabled": true,
         "description": "Recovery and liquidation skill - handles overdue loans",
         "env": {
-          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}",
+          "Neurvinial_API_URL": "${Neurvinial_API_URL:-http://localhost:3000}",
           "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN}"
         }
       },
@@ -30,7 +30,7 @@
         "enabled": true,
         "description": "WDK wallet operations - on-chain USDT transfers and balances",
         "env": {
-          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}",
+          "Neurvinial_API_URL": "${Neurvinial_API_URL:-http://localhost:3000}",
           "WDK_NETWORK": "${WDK_NETWORK:-sepolia}"
         }
       },
@@ -38,7 +38,7 @@
         "enabled": true,
         "description": "Intelligent bot command handling with context-aware reasoning",
         "env": {
-          "SENTINEL_API_URL": "${SENTINEL_API_URL:-http://localhost:3000}"
+          "Neurvinial_API_URL": "${Neurvinial_API_URL:-http://localhost:3000}"
         }
       }
     }
