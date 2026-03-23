@@ -769,38 +769,84 @@ https://sepolia.etherscan.io/address/${treasuryAddress}
       return;
     }
 
+    // Check for "send" command - automatic repayment from user's wallet
+    if (text.toLowerCase().includes('send')) {
+      sendMessage(chatId, `⏳ *Sending Repayment...*\n\n🔄 Transferring $${repaymentAmount} USDT from your wallet to treasury...\n\n⚡ This may take 30-60 seconds`);
+
+      try {
+        const loanService = require('../loans/loanService');
+        const result = await loanService.processAutoRepayment(loanId);
+
+        context.creditScore = result.newCreditScore;
+        context.tier = result.newTier;
+        userContexts.set(`tg_${chatId}`, context);
+
+        const message = `✅ *Loan Repaid Successfully!*
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Amount:** $${repaymentAmount} USDT
+⛓️ **TX Hash:** \`${result.repaymentTxHash.substring(0, 20)}...\`
+🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${result.repaymentTxHash})
+
+${result.wasOnTime ? '⏰ *ON-TIME!* Great job!' : '⚠️ *Late* - repay on-time next time'}
+
+📈 **Credit Score Updated:**
+• Change: ${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange} points
+• New Score: *${result.newCreditScore}/100*
+• Tier: *${result.newTier}*
+${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💡 /status - See your updated profile
+💰 /request - Get another loan`;
+
+        sendMessage(chatId, message);
+        logger.info('Auto-repayment successful', {
+          loanId,
+          txHash: result.repaymentTxHash,
+          borrowerDid: context.did
+        });
+      } catch (sendErr) {
+        logger.error('Auto-repayment failed', { error: sendErr.message, chatId });
+        sendMessage(chatId, `❌ *Auto-Repayment Failed*\n\n${sendErr.message}\n\n💡 *Alternative:* You can still repay manually by sending USDT to the treasury and providing the TX hash:\n\n\`/repay 0xYourTxHash\`\n\nOr use \`/repay auto\` after manually sending.`);
+      }
+      return;
+    }
+
     // No TX hash provided - show simplified instructions
     if (!txHashMatch) {
       const message = `💳 *Repay Your $${repaymentAmount} USDT Loan*
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-📍 **Send USDT to:**
-\`${treasuryAddress}\`
-_(tap to copy)_
-
 💰 **Amount:** $${repaymentAmount} USDT
+📍 **Send to:** \`${treasuryAddress}\`
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-🚀 **EASY OPTIONS:**
+🚀 **EASIEST: Auto-Send** ✨
+\`/repay send\`
+_We'll send from your wallet automatically!_
 
-**Option 1 - Auto Detect** ⭐
-After sending USDT:
-\`/repay auto\`
-_We'll find your TX automatically!_
+**Option 2 - Manual + Auto Detect** ⭐
+1. Send USDT to treasury manually
+2. \`/repay auto\`
+_We'll find your TX!_
 
-**Option 2 - Manual TX Hash**
+**Option 3 - Manual TX Hash**
 \`/repay 0xYourTxHash\`
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-🔗 **Quick Links:**
+🔗 **Links:**
 • [Treasury on Etherscan](https://sepolia.etherscan.io/address/${treasuryAddress})
 • Loan ID: \`${loanId.substring(0, 12)}...\`
 • Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : '30 days'}
 
-💡 *Repaying on-time = +5 credit points!*`;
+💡 *On-time = +5 points!*`;
+
 
       sendMessage(chatId, message);
       return;

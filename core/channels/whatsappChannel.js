@@ -715,6 +715,46 @@ Then send *repay auto* again, or:
       return;
     }
 
+    // Check for "send" command - automatic repayment from user's wallet
+    if (loanIdPart && loanIdPart.toLowerCase().includes('send')) {
+      await sendWhatsAppMessage(phoneNumber, `⏳ *Sending Repayment...*\n\n🔄 Transferring $${repaymentAmount} USDT from your wallet...\n\n⚡ Please wait 30-60 seconds`);
+
+      try {
+        const result = await loanService.processAutoRepayment(loanId);
+
+        context.creditScore = result.newCreditScore;
+        context.tier = result.newTier;
+        whatsappContexts.set(phoneNumber, context);
+
+        await sendWhatsAppMessage(phoneNumber, `✅ *Loan Repaid Successfully!*
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💰 Amount: $${repaymentAmount} USDT
+⛓️ TX: ${result.repaymentTxHash.substring(0, 20)}...
+🔗 https://sepolia.etherscan.io/tx/${result.repaymentTxHash}
+
+${result.wasOnTime ? '⏰ *ON-TIME!* Great job!' : '⚠️ Late'}
+
+📈 *Credit Updated:*
+• Change: ${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange} points
+• Score: *${result.newCreditScore}/100*
+• Tier: *${result.newTier}*
+${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💡 Send *status* for your profile
+💰 Send *request* for another loan`);
+
+        logger.info('WhatsApp auto-repayment successful', { loanId, txHash: result.repaymentTxHash });
+      } catch (sendErr) {
+        logger.error('WhatsApp auto-repayment failed', { error: sendErr.message });
+        await sendWhatsAppMessage(phoneNumber, `❌ *Auto-Repayment Failed*\n\n${sendErr.message}\n\n💡 Try manual repayment:\n*repay 0xYourTxHash*\n\nOr use *repay auto* after manually sending.`);
+      }
+      return;
+    }
+
     // Check if TX hash was provided
     const txHashMatch = loanIdPart ? loanIdPart.match(/0x[a-fA-F0-9]{64}/) : null;
 
@@ -724,28 +764,28 @@ Then send *repay auto* again, or:
 
 ━━━━━━━━━━━━━━━━━━━━━
 
-📍 *Send USDT to:*
-${treasuryAddress}
-
 💰 *Amount:* $${repaymentAmount}
+📍 *Send to:* ${treasuryAddress}
 
 ━━━━━━━━━━━━━━━━━━━━━
 
-🚀 *EASY OPTIONS:*
+🚀 *EASIEST: Auto-Send* ✨
+repay send
+_We'll send from your wallet!_
 
-*Option 1 - Auto Detect* ⭐
-After sending USDT:
-repay auto
+*Option 2 - Manual + Auto*
+1. Send USDT to treasury
+2. repay auto
+_We'll find your TX!_
 
-*Option 2 - Manual*
+*Option 3 - Manual TX*
 repay 0xYourTxHash
 
 ━━━━━━━━━━━━━━━━━━━━━
 
-🔗 Treasury on Etherscan:
-https://sepolia.etherscan.io/address/${treasuryAddress}
+🔗 https://sepolia.etherscan.io/address/${treasuryAddress}
 
-💡 On-time repayment = +5 credit points!`);
+💡 On-time = +5 points!`);
       return;
     }
 

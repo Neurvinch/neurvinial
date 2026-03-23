@@ -309,6 +309,91 @@ async function sendUSDT(recipientAddress, amount) {
 }
 
 /**
+ * Send USDT from an agent's wallet to a recipient.
+ * This allows agents to repay loans from their own wallets.
+ *
+ * @param {number} agentWalletIndex - The agent's wallet derivation index
+ * @param {string} recipientAddress - Recipient wallet address
+ * @param {number} amount - Amount in USDT (e.g., 10.5 = $10.50)
+ * @returns {Promise<{hash: string, fee: string, mode: string, from: string}>} Transaction result
+ */
+async function sendUSDTFromAgent(agentWalletIndex, recipientAddress, amount) {
+  requireInitialized();
+
+  const usdtContract = USDT_CONTRACTS[config.wdk.network] || USDT_CONTRACTS.sepolia;
+  const amountInBaseUnits = BigInt(Math.round(amount * 1e6)); // USDT has 6 decimals
+  const tokenSymbol = 'USDT';
+  const is4337Active = is4337Enabled();
+
+  logger.info('Initiating agent USDT transfer', {
+    agentIndex: agentWalletIndex,
+    to: recipientAddress,
+    amount,
+    amountBaseUnits: amountInBaseUnits.toString(),
+    token: usdtContract,
+    network: config.wdk.network,
+    transferMode: is4337Active ? '4337-abstracted' : 'traditional'
+  });
+
+  try {
+    // Get the agent's account by index
+    const agentAccount = await state.wdk.getAccount(config.wdk.blockchain, agentWalletIndex);
+    const agentAddress = await agentAccount.getAddress();
+
+    // Check agent's USDT balance
+    const agentBalance = await getUSDTBalance(agentAddress);
+
+    if (agentBalance.balance < amount) {
+      const errorMsg = `Agent wallet insufficient ${tokenSymbol}: need ${amount} ${tokenSymbol} but only have ${agentBalance.balance.toFixed(2)} ${tokenSymbol}.`;
+      logger.error('Agent transfer BLOCKED - insufficient balance', {
+        agentIndex: agentWalletIndex,
+        agentAddress,
+        needed: amount,
+        available: agentBalance.balance,
+        tokenSymbol
+      });
+      throw new Error(errorMsg);
+    }
+
+    // Execute the transfer from agent's wallet
+    const result = await agentAccount.transfer({
+      token: usdtContract,
+      recipient: recipientAddress,
+      amount: amountInBaseUnits
+    });
+
+    logger.info('Agent stablecoin transfer CONFIRMED', {
+      from: agentAddress,
+      to: recipientAddress,
+      amount,
+      tokenSymbol,
+      txHash: result.hash,
+      fee: result.fee?.toString(),
+      transferMode: is4337Active ? '4337-abstracted' : 'traditional',
+      gasSponsored: is4337Active ? 'paymaster' : 'sender'
+    });
+
+    return {
+      hash: result.hash,
+      fee: result.fee?.toString() || '0',
+      mode: is4337Active ? '4337' : 'traditional',
+      simulated: false,
+      from: agentAddress
+    };
+  } catch (err) {
+    logger.error('Agent stablecoin transfer FAILED', {
+      agentIndex: agentWalletIndex,
+      to: recipientAddress,
+      amount,
+      tokenSymbol,
+      error: err.message,
+      transferMode: is4337Active ? '4337-abstracted' : 'traditional'
+    });
+    throw new Error(`${tokenSymbol} transfer failed: ${err.message}`);
+  }
+}
+
+/**
  * Check stablecoin balance for any address.
  * Returns USDT on mainnet/polygon/arbitrum, USDC on Sepolia.
  */
@@ -424,6 +509,7 @@ module.exports = {
   getSentinelAddress,
   createWalletForAgent,
   sendUSDT,
+  sendUSDTFromAgent,
   getUSDTBalance,
   getSentinelETHBalance,
   getSentinelUSDTBalance,

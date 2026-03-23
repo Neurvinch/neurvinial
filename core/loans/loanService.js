@@ -406,6 +406,81 @@ async function processRepayment(loanId, repaymentTxHash, options = {}) {
 }
 
 // =========================================================
+// STEP 4B: Process automatic repayment (send from agent wallet)
+// =========================================================
+// This function sends USDT from the borrower's wallet to treasury automatically.
+// Used when borrowers use `/repay send` command for easy repayment.
+async function processAutoRepayment(loanId) {
+  const loan = await Loan.findOne({ loanId });
+  if (!loan) {
+    const err = new Error('Loan not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (loan.status !== LOAN_STATUSES.DISBURSED) {
+    const err = new Error(`Loan is not in disbursed status (current: ${loan.status})`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const agent = await Agent.findOne({ did: loan.borrowerDid });
+  if (!agent) {
+    const err = new Error('Agent not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (!agent.walletIndex && agent.walletIndex !== 0) {
+    const err = new Error('Agent wallet index not found. Cannot send from agent wallet.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const treasuryAddress = await walletManager.getSentinelAddress();
+
+  logger.info('Processing auto-repayment', {
+    loanId,
+    agentDid: agent.did,
+    agentWalletIndex: agent.walletIndex,
+    amount: loan.totalDue,
+    treasury: treasuryAddress
+  });
+
+  try {
+    // Send USDT from agent's wallet to treasury
+    const transferResult = await walletManager.sendUSDTFromAgent(
+      agent.walletIndex,
+      treasuryAddress,
+      loan.totalDue
+    );
+
+    logger.info('Auto-repayment transfer successful', {
+      loanId,
+      txHash: transferResult.hash,
+      from: transferResult.from,
+      to: treasuryAddress,
+      amount: loan.totalDue
+    });
+
+    // Now process the repayment with the TX hash (skip verification since we just sent it)
+    return await processRepayment(loanId, transferResult.hash, { skipVerification: true });
+
+  } catch (transferErr) {
+    logger.error('Auto-repayment transfer failed', {
+      loanId,
+      error: transferErr.message
+    });
+
+    // Provide helpful error messages
+    if (transferErr.message.includes('insufficient')) {
+      throw new Error(`Insufficient USDT in your wallet. You need ${loan.totalDue} USDT to repay this loan. Your wallet: ${agent.walletAddress}`);
+    }
+
+    throw new Error(`Failed to send repayment: ${transferErr.message}`);
+  }
+}
+
+// =========================================================
 // STEP 5: Mark loan as defaulted
 // =========================================================
 // Called by the repayment monitor when deadline passes.
@@ -547,6 +622,7 @@ module.exports = {
   applyDecision,
   disburseLoan,
   processRepayment,
+  processAutoRepayment,
   markDefault,
   markRepaid, // Alias for daemon compatibility
   getLoanStatus,
