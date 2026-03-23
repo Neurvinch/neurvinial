@@ -628,35 +628,53 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
       return;
     }
 
-    // Find active loans for this user
-    const activeLoans = await Loan.find({
+    // Find disbursed loans only - these are the ones that can be repaid
+    const disbursedLoans = await Loan.find({
       borrowerDid: context.did,
-      status: { $in: ['approved', 'disbursed'] }
+      status: 'disbursed'
     }).sort({ createdAt: 1 });
 
-    if (activeLoans.length === 0) {
-      await sendWhatsAppMessage(phoneNumber, '✅ *No Active Loans*\n\nYou have no loans to repay. Send "request 100" to get a loan.');
+    if (disbursedLoans.length === 0) {
+      // Check if there are pending/approved loans
+      const pendingLoans = await Loan.find({
+        borrowerDid: context.did,
+        status: { $in: ['pending', 'approved'] }
+      }).sort({ createdAt: -1 });
+
+      if (pendingLoans.length > 0) {
+        const loan = pendingLoans[0];
+        await sendWhatsAppMessage(phoneNumber, `❌ Your loan request is still in ${loan.status} status.\n\nYou need to:\n1. Send "approve" to disburse the loan\n2. Receive USDT in your wallet\n3. Then use "repay" to repay it\n\nSend "approve" to disburse your loan.`);
+      } else {
+        await sendWhatsAppMessage(phoneNumber, '✅ *No Active Loans*\n\nYou have no loans to repay. Send "request 100" to get a loan.');
+      }
       return;
     }
 
-    const loan = activeLoans[0];
+    const loan = disbursedLoans[0];
     const treasuryAddress = await walletManager.getSentinelAddress();
 
+    // Validate loan has required fields
+    if (!loan.totalDue || loan.totalDue <= 0) {
+      logger.error('Loan missing totalDue', { loanId: loan.loanId, borrowerDid: context.did });
+      await sendWhatsAppMessage(phoneNumber, `❌ Loan record incomplete. Please contact support.\n\nLoan ID: ${loan.loanId}`);
+      return;
+    }
+
     // Check if TX hash was provided in the message
-    const txHashMatch = messageText ? messageText.match(/0x[a-fA-F0-9]{64}/) : null;
+    const txHashMatch = loanIdPart ? loanIdPart.match(/0x[a-fA-F0-9]{64}/) : null;
 
     if (!txHashMatch) {
       // Show instructions to repay on-chain
       const instructionMessage = `💳 *Repay Your Loan On-Chain*
 
 📋 *Loan Details:*
-💰 Amount to repay: *$${loan.totalDue || loan.amount} USDT*
+💰 Amount to repay: *$${loan.totalDue} USDT*
 🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
 📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
 
 ⛓️ *How to Repay:*
 
-*Step 1:* Send *${loan.totalDue || loan.amount} USDT* on-chain to:
+*Step 1:* Send *${loan.totalDue} USDT* on-chain to:
 \`${treasuryAddress}\`
 
 *Step 2:* Get your transaction hash from Etherscan
@@ -677,16 +695,18 @@ repay 0xabc123def456...
 
     // Real repayment with TX hash
     const txHash = txHashMatch[0];
+    const loanId = loan.loanId || loan._id.toString();
 
     logger.info('Processing on-chain repayment via WhatsApp', {
-      loanId: loan.loanId,
+      loanId,
       txHash,
-      borrowerDid: context.did
+      borrowerDid: context.did,
+      loanAmount: loan.totalDue
     });
 
     // Use loan service to process repayment
     const loanService = require('../loans/loanService');
-    const result = await loanService.processRepayment(loan.loanId, txHash);
+    const result = await loanService.processRepayment(loanId, txHash);
 
     // Update context with new credit score
     context.creditScore = result.newCreditScore;
@@ -698,7 +718,7 @@ repay 0xabc123def456...
 
     const message = `✅ *Loan Repaid Successfully!*
 
-💰 *Amount Repaid:* $${loan.totalDue || loan.amount} USDT
+💰 *Amount Repaid:* $${loan.totalDue} USDT
 ⛓️ *TX Hash:* ${txHash.substring(0, 20)}...
 🔗 View on Etherscan:
 https://sepolia.etherscan.io/tx/${txHash}
@@ -719,13 +739,21 @@ ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
     await sendWhatsAppMessage(phoneNumber, message);
     logger.info('Loan repaid via WhatsApp', {
       did: context.did,
-      loanId: loan.loanId || loan._id,
+      loanId,
       amount: loan.amount,
       txHash
     });
-  } catch (error) {
-    await sendWhatsAppMessage(phoneNumber, `❌ Repayment failed: ${error.message}\n\nMake sure you sent the correct TX hash from a real USDT transfer to the treasury.`);
-    logger.error('WhatsApp repay failed', { error: error.message });
+  } catch (repaymentError) {
+    logger.error('WhatsApp repay failed', { error: repaymentError.message, phoneNumber });
+
+    // Provide specific error guidance
+    if (repaymentError.message.includes('not in disbursed status')) {
+      await sendWhatsAppMessage(phoneNumber, `❌ Loan status error: ${repaymentError.message}\n\nMake sure the loan has been disbursed with "approve" first.`);
+    } else if (repaymentError.message.includes('not found')) {
+      await sendWhatsAppMessage(phoneNumber, `❌ Loan not found. Please try again or contact support.`);
+    } else {
+      await sendWhatsAppMessage(phoneNumber, `❌ Repayment failed: ${repaymentError.message}\n\nMake sure:\n• You sent REAL USDT to the treasury address\n• You got the TX hash from Etherscan\n• TX hash is exactly 66 characters (0x + 64 hex chars)\n• You\'re repaying the correct amount`);
+    }
   }
 };
 

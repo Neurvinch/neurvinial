@@ -661,35 +661,54 @@ async function handleRepay(msg) {
   }
 
   try {
-    // Find active loans
-    const activeLoans = await Loan.find({
+    // Find active loans - only disbursed loans can be repaid
+    const disbursedLoans = await Loan.find({
       borrowerDid: context.did,
-      status: { $in: ['approved', 'disbursed'] }
+      status: 'disbursed'
     }).sort({ createdAt: 1 });
 
-    if (activeLoans.length === 0) {
-      sendMessage(chatId, '✅ *No Active Loans*\n\nYou have no loans to repay. Send /request 100 to get a loan.');
+    if (disbursedLoans.length === 0) {
+      // Check if there are pending/approved loans that haven't been disbursed
+      const pendingLoans = await Loan.find({
+        borrowerDid: context.did,
+        status: { $in: ['pending', 'approved'] }
+      }).sort({ createdAt: -1 });
+
+      if (pendingLoans.length > 0) {
+        const loan = pendingLoans[0];
+        sendMessage(chatId, `❌ Your loan request is still in ${loan.status} status.\n\nYou need to:\n1. Send /approve to disburse the loan\n2. Receive USDT in your wallet\n3. Then use /repay to repay it\n\nSend /approve to disburse your loan.`);
+      } else {
+        sendMessage(chatId, '✅ *No Active Loans*\n\nYou have no loans to repay. Send /request 100 to get a loan.');
+      }
       return;
     }
 
-    const loan = activeLoans[0];
+    const loan = disbursedLoans[0];
     const treasuryAddress = await walletManager.getSentinelAddress();
+
+    // Validate loan has required fields
+    if (!loan.totalDue || loan.totalDue <= 0) {
+      logger.error('Loan missing totalDue', { loanId: loan.loanId, borrowerDid: context.did });
+      sendMessage(chatId, `❌ Loan record incomplete. Please contact support.\n\nLoan ID: ${loan.loanId}`);
+      return;
+    }
 
     // Extract TX hash from command (if provided)
     const txHashMatch = text.match(/0x[a-fA-F0-9]{64}/);
 
     if (!txHashMatch) {
       // Show instructions to repay on-chain
+      const loanId = loan.loanId || loan._id.toString();
       const message = `💳 *Repay Your Loan On-Chain*
 
 📋 **Loan Details:**
-💰 Amount to repay: **$${loan.totalDue || loan.amount} USDT**
-🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
+💰 Amount to repay: **$${loan.totalDue} USDT**
+🆔 Loan ID: ${loanId.substring(0, 16)}...
 📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
 
 ⛓️ **How to Repay:**
 
-**Step 1:** Send **${loan.totalDue || loan.amount} USDT** on-chain to:
+**Step 1:** Send **${loan.totalDue} USDT** on-chain to:
 \`${treasuryAddress}\`
 (Click to copy address ☝️)
 
@@ -714,28 +733,31 @@ Your wallet: \`${context.walletAddress || 'Not available'}\`
 
     // Real repayment with TX hash
     const txHash = txHashMatch[0];
+    const loanId = loan.loanId || loan._id.toString();
 
     logger.info('Processing on-chain repayment', {
-      loanId: loan.loanId,
+      loanId,
       txHash,
-      borrowerDid: context.did
+      borrowerDid: context.did,
+      loanAmount: loan.totalDue
     });
 
-    // Use loan service to process repayment (handles LP repayment too)
-    const loanService = require('../loans/loanService');
-    const result = await loanService.processRepayment(loan.loanId, txHash);
+    try {
+      // Use loan service to process repayment (handles LP repayment too)
+      const loanService = require('../loans/loanService');
+      const result = await loanService.processRepayment(loanId, txHash);
 
-    // Update context with new credit score
-    context.creditScore = result.newCreditScore;
-    context.tier = result.newTier;
-    userContexts.set(`tg_${chatId}`, context);
+      // Update context with new credit score
+      context.creditScore = result.newCreditScore;
+      context.tier = result.newTier;
+      userContexts.set(`tg_${chatId}`, context);
 
-    const wasOnTime = result.wasOnTime;
-    const scoreChange = result.creditScoreChange;
+      const wasOnTime = result.wasOnTime;
+      const scoreChange = result.creditScoreChange;
 
-    const message = `✅ *Loan Repaid Successfully!*
+      const message = `✅ *Loan Repaid Successfully!*
 
-💰 **Amount Repaid:** $${loan.totalDue || loan.amount} USDT
+💰 **Amount Repaid:** $${loan.totalDue} USDT
 ⛓️ **TX Hash:** \`${txHash.substring(0, 20)}...\`
 🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${txHash})
 
@@ -752,11 +774,32 @@ ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
 💡 Send /status to see your updated profile
 💰 Send /request to get another loan`;
 
-    sendMessage(chatId, message);
+      sendMessage(chatId, message);
 
+    } catch (repaymentError) {
+      logger.error('Repayment processing failed', {
+        error: repaymentError.message,
+        chatId,
+        loanId,
+        txHash
+      });
+
+      // Provide specific error guidance
+      if (repaymentError.message.includes('not in disbursed status')) {
+        sendMessage(chatId, `❌ Loan status error: ${repaymentError.message}\n\nMake sure the loan has been disbursed with /approve first.`);
+      } else if (repaymentError.message.includes('not found')) {
+        sendMessage(chatId, `❌ Loan not found. Please try again or contact support.`);
+      } else {
+        sendMessage(chatId, `❌ Repayment failed: ${repaymentError.message}\n\n💡 Make sure:
+• You sent REAL USDT to the treasury address
+• You got the TX hash from Etherscan
+• TX hash is exactly 66 characters (0x + 64 hex chars)
+• You're repaying the correct amount`);
+      }
+    }
   } catch (error) {
-    logger.error('Repayment failed', { error: error.message, chatId });
-    sendMessage(chatId, `❌ Repayment failed: ${error.message}\n\nMake sure you sent the correct TX hash from a real USDT transfer to the treasury.`);
+    logger.error('Repayment lookup failed', { error: error.message, chatId });
+    sendMessage(chatId, `❌ Error checking your loans: ${error.message}\n\nTry again or contact support if the problem persists.`);
   }
 }
 
