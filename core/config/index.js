@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Centralized Configuration
+// Neurvinial — Centralized Configuration
 // ============================================
 // Every module imports config from HERE — never reads process.env directly.
 // This guarantees: (1) all env vars validated at startup, (2) single source of truth.

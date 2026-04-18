@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Telegram Channel (REWRITTEN)
+// Neurvinial — Telegram Channel (REWRITTEN)
 // ============================================
 // Clean, working Telegram bot for hackathon demo
 // Real USDT loans via ERC-4337 Account Abstraction
@@ -100,7 +100,7 @@ async function sendMessage(chatId, text, options = {}) {
  */
 
 async function handleStart(msg) {
-  const text = `🤖 *Welcome to SENTINEL*
+  const text = `🤖 *Welcome to Neurvinial*
 
 I'm your autonomous lending agent powered by ERC-4337 and real USDT.
 
@@ -200,7 +200,7 @@ async function handleStatus(msg) {
   }
 
   try {
-    const result = await invokeSkill('sentinel_credit', {
+    const result = await invokeSkill('neurvinial_credit', {
       did: context.did,
       action: 'assess_creditworthiness'
     });
@@ -282,7 +282,7 @@ Or just say: "I need 500 dollars"
 
   try {
     // Evaluate loan request
-    const result = await invokeSkill('sentinel_lending', {
+    const result = await invokeSkill('neurvinial_lending', {
       did: context.did,
       amount,
       creditScore: context.creditScore,
@@ -315,7 +315,7 @@ Or just say: "I need 500 dollars"
       dueDate.setDate(dueDate.getDate() + 30);
 
       const loan = new Loan({
-        loanId: `SENTINEL-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        loanId: `Neurvinial-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
         borrowerDid: context.did,
         amount,
         apr: interestRate,
@@ -689,57 +689,173 @@ async function handleRepay(msg) {
     // Calculate totalDue if missing (fallback to amount + interest)
     let repaymentAmount = loan.totalDue;
     if (!repaymentAmount || repaymentAmount <= 0) {
-      // Calculate from amount + interest
       const interest = loan.interestAccrued || (loan.amount * (loan.apr || 0.05) * (30 / 365));
       repaymentAmount = parseFloat((loan.amount + interest).toFixed(2));
-
-      // Also fix the loan record in database
       loan.totalDue = repaymentAmount;
       await loan.save();
-      logger.info('Fixed missing totalDue on loan', { loanId: loan.loanId, totalDue: repaymentAmount });
     }
 
     // Extract TX hash from command (if provided)
     const txHashMatch = text.match(/0x[a-fA-F0-9]{64}/);
+    const loanId = loan.loanId || loan._id.toString();
 
-    if (!txHashMatch) {
-      // Show instructions to repay on-chain
-      const loanId = loan.loanId || loan._id.toString();
-      const message = `💳 *Repay Your Loan On-Chain*
+    // Check for "auto" or "check" command (auto-detect repayment)
+    if (text.toLowerCase().includes('auto') || text.toLowerCase().includes('check')) {
+      sendMessage(chatId, '🔍 *Checking for on-chain repayment...*\n\nScanning treasury for incoming transfers...');
 
-📋 **Loan Details:**
-💰 Amount to repay: **$${repaymentAmount} USDT**
-🆔 Loan ID: ${loanId.substring(0, 16)}...
-📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
+      try {
+        const indexerService = require('../wdk/indexerService');
 
-⛓️ **How to Repay:**
+        // Check for repayment to treasury
+        const detection = await indexerService.detectRepayment(
+          context.walletAddress,
+          treasuryAddress,
+          repaymentAmount,
+          loan.disbursedAt || loan.createdAt
+        );
 
-**Step 1:** Send **${repaymentAmount} USDT** on-chain to:
+        if (detection.detected) {
+          // Auto-process repayment!
+          const loanService = require('../loans/loanService');
+          const result = await loanService.processRepayment(loanId, detection.txHash);
+
+          context.creditScore = result.newCreditScore;
+          context.tier = result.newTier;
+          userContexts.set(`tg_${chatId}`, context);
+
+          const message = `🎉 *REPAYMENT AUTO-DETECTED!*
+
+✅ Found your on-chain payment!
+
+💰 **Amount:** $${detection.amount?.toFixed(2) || repaymentAmount} USDT
+⛓️ **TX Hash:** \`${detection.txHash.substring(0, 20)}...\`
+🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${detection.txHash})
+
+📈 **Credit Updated:**
+• Score: ${result.newCreditScore}/100 (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})
+• Tier: ${result.newTier}
+${result.newTier !== context.tier ? `\n🏆 **UPGRADED!** ${context.tier} → ${result.newTier}` : ''}
+
+⚡ *No manual /repay needed - we detected it automatically!*
+
+💡 Send /status to see your profile`;
+
+          sendMessage(chatId, message);
+        } else {
+          sendMessage(chatId, `❌ *No Repayment Found*
+
+We scanned for transfers from your wallet to treasury but found none.
+
+📋 **What you need to do:**
+
+1️⃣ Send **$${repaymentAmount} USDT** to:
 \`${treasuryAddress}\`
-(Click to copy address ☝️)
 
-**Step 2:** Get your transaction hash from Etherscan
+2️⃣ Wait 1-2 minutes for confirmation
 
-**Step 3:** Send it here:
-\`/repay 0xYourTxHashHere\`
+3️⃣ Then either:
+   • Send \`/repay auto\` again (we'll detect it)
+   • OR send \`/repay 0xYourTxHash\`
 
-**Example:**
-\`/repay 0xabc123def456...\`
+🔗 *Treasury Etherscan:*
+https://sepolia.etherscan.io/address/${treasuryAddress}
 
-🔗 **Need USDT?**
-Your wallet: \`${context.walletAddress || 'Not available'}\`
+💡 Make sure you send from wallet: \`${context.walletAddress?.substring(0, 20) || 'unknown'}...\``);
+        }
+      } catch (detectErr) {
+        logger.error('Auto-detect repayment failed', { error: detectErr.message });
+        sendMessage(chatId, `❌ Auto-detection unavailable: ${detectErr.message}\n\nPlease use manual repayment:\n\`/repay 0xYourTxHash\``);
+      }
+      return;
+    }
 
-💡 **Tip:** Repaying on-time improves your credit score by +5 points!
+    // Check for "send" command - automatic repayment from user's wallet
+    if (text.toLowerCase().includes('send')) {
+      sendMessage(chatId, `⏳ *Sending Repayment...*\n\n🔄 Transferring $${repaymentAmount} USDT from your wallet to treasury...\n\n⚡ This may take 30-60 seconds`);
 
-⚠️ **NO MOCKS**: This requires a REAL blockchain transaction.`;
+      try {
+        const loanService = require('../loans/loanService');
+        const result = await loanService.processAutoRepayment(loanId);
+
+        context.creditScore = result.newCreditScore;
+        context.tier = result.newTier;
+        userContexts.set(`tg_${chatId}`, context);
+
+        const message = `✅ *Loan Repaid Successfully!*
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Amount:** $${repaymentAmount} USDT
+⛓️ **TX Hash:** \`${result.repaymentTxHash.substring(0, 20)}...\`
+🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${result.repaymentTxHash})
+
+${result.wasOnTime ? '⏰ *ON-TIME!* Great job!' : '⚠️ *Late* - repay on-time next time'}
+
+📈 **Credit Score Updated:**
+• Change: ${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange} points
+• New Score: *${result.newCreditScore}/100*
+• Tier: *${result.newTier}*
+${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💡 /status - See your updated profile
+💰 /request - Get another loan`;
+
+        sendMessage(chatId, message);
+        logger.info('Auto-repayment successful', {
+          loanId,
+          txHash: result.repaymentTxHash,
+          borrowerDid: context.did
+        });
+      } catch (sendErr) {
+        logger.error('Auto-repayment failed', { error: sendErr.message, chatId });
+        sendMessage(chatId, `❌ *Auto-Repayment Failed*\n\n${sendErr.message}\n\n💡 *Alternative:* You can still repay manually by sending USDT to the treasury and providing the TX hash:\n\n\`/repay 0xYourTxHash\`\n\nOr use \`/repay auto\` after manually sending.`);
+      }
+      return;
+    }
+
+    // No TX hash provided - show simplified instructions
+    if (!txHashMatch) {
+      const message = `💳 *Repay Your $${repaymentAmount} USDT Loan*
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Amount:** $${repaymentAmount} USDT
+📍 **Send to:** \`${treasuryAddress}\`
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 **EASIEST: Auto-Send** ✨
+\`/repay send\`
+_We'll send from your wallet automatically!_
+
+**Option 2 - Manual + Auto Detect** ⭐
+1. Send USDT to treasury manually
+2. \`/repay auto\`
+_We'll find your TX!_
+
+**Option 3 - Manual TX Hash**
+\`/repay 0xYourTxHash\`
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 **Links:**
+• [Treasury on Etherscan](https://sepolia.etherscan.io/address/${treasuryAddress})
+• Loan ID: \`${loanId.substring(0, 12)}...\`
+• Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : '30 days'}
+
+💡 *On-time = +5 points!*`;
+
 
       sendMessage(chatId, message);
       return;
     }
 
-    // Real repayment with TX hash
+    // Real repayment with TX hash - VERIFY ON-CHAIN
     const txHash = txHashMatch[0];
-    const loanId = loan.loanId || loan._id.toString();
+
+    sendMessage(chatId, `🔍 *Verifying TX on-chain...*\n\nChecking: \`${txHash.substring(0, 20)}...\``);
 
     logger.info('Processing on-chain repayment', {
       loanId,
@@ -749,7 +865,27 @@ Your wallet: \`${context.walletAddress || 'Not available'}\`
     });
 
     try {
-      // Use loan service to process repayment (handles LP repayment too)
+      // First verify TX on Etherscan
+      let txVerified = false;
+      let verificationNote = '';
+
+      try {
+        const indexerService = require('../wdk/indexerService');
+        const verification = await indexerService.verifyTransaction(txHash, {
+          to: treasuryAddress,
+          minAmount: repaymentAmount * 0.99 // 1% tolerance
+        });
+
+        txVerified = verification.verified;
+        if (!txVerified) {
+          verificationNote = `\n⚠️ Note: ${verification.reason || 'TX verification pending'}`;
+        }
+      } catch (verifyErr) {
+        logger.warn('TX verification unavailable', { error: verifyErr.message });
+        verificationNote = '\n⚠️ Note: On-chain verification unavailable, proceeding with trust';
+      }
+
+      // Use loan service to process repayment
       const loanService = require('../loans/loanService');
       const result = await loanService.processRepayment(loanId, txHash);
 
@@ -763,22 +899,28 @@ Your wallet: \`${context.walletAddress || 'Not available'}\`
 
       const message = `✅ *Loan Repaid Successfully!*
 
-💰 **Amount Repaid:** $${repaymentAmount} USDT
-⛓️ **TX Hash:** \`${txHash.substring(0, 20)}...\`
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 **Amount:** $${repaymentAmount} USDT
+⛓️ **TX:** \`${txHash.substring(0, 20)}...\`
 🔗 [View on Etherscan](https://sepolia.etherscan.io/tx/${txHash})
+${txVerified ? '✅ **Verified on-chain!**' : ''}${verificationNote}
 
-${wasOnTime ? '⏰ **On-Time!** Great job!' : '⚠️ **Late Payment** - Try to repay on time next time'}
+━━━━━━━━━━━━━━━━━━━━━━
 
-🎉 *Credit Score Updated!*
-**Score Change:** ${scoreChange > 0 ? '+' : ''}${scoreChange} points
-**New Score:** ${result.newCreditScore}/100
-**New Tier:** ${result.newTier}
+${wasOnTime ? '⏰ **ON-TIME!** Great job!' : '⚠️ **Late** - Next time repay before due date'}
+
+📈 **Credit Score Updated:**
+• Change: ${scoreChange > 0 ? '+' : ''}${scoreChange} points
+• New Score: **${result.newCreditScore}/100**
+• Tier: **${result.newTier}**
 ${result.newTier !== context.tier ? `\n🎊 **TIER UPGRADED!** ${context.tier} → ${result.newTier}` : ''}
 
 ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
+━━━━━━━━━━━━━━━━━━━━━━
 
-💡 Send /status to see your updated profile
-💰 Send /request to get another loan`;
+💡 /status - See your updated profile
+💰 /request - Get another loan`;
 
       sendMessage(chatId, message);
 
@@ -796,16 +938,13 @@ ${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
       } else if (repaymentError.message.includes('not found')) {
         sendMessage(chatId, `❌ Loan not found. Please try again or contact support.`);
       } else {
-        sendMessage(chatId, `❌ Repayment failed: ${repaymentError.message}\n\n💡 Make sure:
-• You sent REAL USDT to the treasury address
-• You got the TX hash from Etherscan
-• TX hash is exactly 66 characters (0x + 64 hex chars)
-• You're repaying the correct amount`);
+        sendMessage(chatId, `❌ Repayment failed: ${repaymentError.message}\n\nPlease try again or contact support.`);
       }
     }
+
   } catch (error) {
-    logger.error('Repayment lookup failed', { error: error.message, chatId });
-    sendMessage(chatId, `❌ Error checking your loans: ${error.message}\n\nTry again or contact support if the problem persists.`);
+    logger.error('Repay handler error', { error: error.message, chatId });
+    sendMessage(chatId, `❌ Error: ${error.message}`);
   }
 }
 
@@ -874,7 +1013,7 @@ async function handleHealth(msg) {
     const ethBal = await walletManager.getSentinelETHBalance();
     const usdtBal = await walletManager.getSentinelUSDTBalance();
 
-    const healthText = `🏥 *SENTINEL System Health*
+    const healthText = `🏥 *Neurvinial System Health*
 
 🌐 **Main Services:**
 • API Server: ✅ Online
@@ -925,7 +1064,7 @@ async function handleTreasury(msg) {
     const usdtBalance = await walletManager.getSentinelUSDTBalance();
     const ethBalance = await walletManager.getSentinelETHBalance();
 
-    const message = `🏦 **SENTINEL Treasury**
+    const message = `🏦 **Neurvinial Treasury**
 
 💰 **Balances:**
 • USDT: $${usdtBalance.balance.toFixed(2)}
@@ -959,7 +1098,7 @@ async function handleTiers(msg) {
   const userId = msg.from.id;
   const context = await getUserContext(chatId, userId);
 
-  const message = `📊 **SENTINEL Credit Tiers**
+  const message = `📊 **Neurvinial Credit Tiers**
 
 🥇 **Tier A** (Score 80-100)
 • Max Loan: $5,000 USDT
@@ -1082,7 +1221,7 @@ async function handleCapital(msg) {
     const capitalService = require('../reallocator/capitalService');
     const status = await capitalService.getCapitalStatus();
 
-    const message = `🏦 **SENTINEL Capital Overview**
+    const message = `🏦 **Neurvinial Capital Overview**
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1187,10 +1326,10 @@ async function handleLPPool(msg) {
 💡 **How Agent-to-Agent Lending Works:**
 
 1️⃣ LP Agents commit capital at 2% APR
-2️⃣ SENTINEL borrows when treasury is low
-3️⃣ SENTINEL lends to borrowers at 3.5-8% APR
+2️⃣ Neurvinial borrows when treasury is low
+3️⃣ Neurvinial lends to borrowers at 3.5-8% APR
 4️⃣ LP Agents get auto-repaid with interest
-5️⃣ SENTINEL earns the spread (1.5-6%)
+5️⃣ Neurvinial earns the spread (1.5-6%)
 
 ✅ **Autonomous:** No human intervention!
 
@@ -1372,7 +1511,7 @@ async function handleHelp(msg) {
   let helpText;
 
   if (!context.registered) {
-    helpText = `🚀 *Welcome to SENTINEL!*
+    helpText = `🚀 *Welcome to Neurvinial!*
 
 *The Autonomous AI Lending Agent*
 
@@ -1384,7 +1523,7 @@ async function handleHelp(msg) {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💰 *What SENTINEL Offers:*
+💰 *What Neurvinial Offers:*
 • Real USDT loans on Ethereum
 • No gas fees (ERC-4337)
 • AI-powered credit scoring
@@ -1404,7 +1543,7 @@ Just say things like:
     const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
     const maxLoan = tierLimits[context.tier] || 500;
 
-    helpText = `📊 *SENTINEL Commands* (Tier ${context.tier})
+    helpText = `📊 *Neurvinial Commands* (Tier ${context.tier})
 
 💰 **Your limit:** $${maxLoan} USDT | Score: ${context.creditScore || 50}/100
 
@@ -1526,7 +1665,7 @@ async function handleMessage(msg) {
     // If OpenClaw provided a smart response for conversation/greeting
     if (action === 'conversation' || action === 'greet') {
       const response = openclawDecision?.result?.response ||
-        "Hey! I'm SENTINEL, your autonomous lending agent. Try /help to see what I can do!";
+        "Hey! I'm Neurvinial, your autonomous lending agent. Try /help to see what I can do!";
       sendMessage(chatId, response);
       return;
     }
@@ -1575,7 +1714,7 @@ async function handleMessage(msg) {
     } else if (action === 'suggest_register') {
       // OpenClaw determined user needs to register
       const response = openclawDecision?.result?.response ||
-        "To access SENTINEL's features, you need to register first! Send /register to create your account.";
+        "To access Neurvinial's features, you need to register first! Send /register to create your account.";
       sendMessage(chatId, response);
     } else if (openclawDecision?.result?.response) {
       // OpenClaw provided a custom response

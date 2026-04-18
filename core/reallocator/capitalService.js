@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Capital Reallocation Service
+// Neurvinial — Capital Reallocation Service
 // ============================================
 // Manages Sentinel's treasury / lending pool:
 //   - Tracks deployed capital vs. idle capital

@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Request Validation Middleware Factory
+// Neurvinial — Request Validation Middleware Factory
 // ============================================
 // Takes a Joi schema, returns Express middleware that validates req.body.
 // Usage: router.post('/loans/request', validateRequest(loanRequestSchema), handler);

@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — OpenClaw Agent Integration
+// Neurvinial — OpenClaw Agent Integration
 // ============================================
 // Functional integration with OpenClaw SDK and Groq LLM.
 // Skills are loaded from markdown files and executed via LLM reasoning.
@@ -69,7 +69,7 @@ const parseFrontmatter = (content) => {
  * @returns {Object|null} Skill object or null if not found
  */
 const loadSkill = (skillName) => {
-  const skillDir = skillName.replace('sentinel_', '');
+  const skillDir = skillName.replace('neurvinial_', '');
   const skillPath = path.join(SKILLS_PATH, skillDir, 'SKILL.md');
 
   if (!fs.existsSync(skillPath)) {
@@ -190,7 +190,7 @@ const enhanceLendingContext = (context) => {
 const buildSkillPrompt = (skill, context) => {
   // Add lending hints for lending skill
   let enhancedContext = context;
-  if (skill.name === 'sentinel_lending') {
+  if (skill.name === 'neurvinial_lending') {
     enhancedContext = enhanceLendingContext(context);
   }
 
@@ -238,7 +238,7 @@ Respond with valid JSON only.
  */
 const executeLLMReasoning = async (skill, context) => {
   // SPECIAL HANDLING: For lending decisions with complete info, use deterministic logic
-  if (skill.name === 'sentinel_lending') {
+  if (skill.name === 'neurvinial_lending') {
     const ctx = context.context || context;
     const { tier, creditScore, amount } = ctx;
 
@@ -448,7 +448,7 @@ const reloadSkills = async () => {
  * @returns {Promise<Object>}
  */
 const assessCredit = async (agentData) =>
-  invokeSkill('sentinel_credit', {
+  invokeSkill('neurvinial_credit', {
     did: agentData.did,
     creditScore: agentData.creditScore,
     tier: agentData.tier,
@@ -464,7 +464,7 @@ const assessCredit = async (agentData) =>
  * @returns {Promise<Object>}
  */
 const makeLendingDecision = async (loanRequest) =>
-  invokeSkill('sentinel_lending', {
+  invokeSkill('neurvinial_lending', {
     did: loanRequest.did,
     amount: loanRequest.amount,
     purpose: loanRequest.purpose,
@@ -484,7 +484,7 @@ const makeLendingDecision = async (loanRequest) =>
  * @returns {Promise<Object>}
  */
 const initiateRecovery = async (loan) =>
-  invokeSkill('sentinel_recovery', {
+  invokeSkill('neurvinial_recovery', {
     loanId: loan.loanId,
     borrowerDid: loan.borrowerDid,
     amount: loan.totalDue,
@@ -499,7 +499,7 @@ const initiateRecovery = async (loan) =>
  * @returns {Promise<Object>}
  */
 const processIntelligentCommand = async (commandData) =>
-  invokeSkill('sentinel_bot_commands', {
+  invokeSkill('neurvinial_bot_commands', {
     command: commandData.command,
     user: commandData.user,
     message: commandData.message,

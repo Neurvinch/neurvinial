@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Express Error Handler Middleware
+// Neurvinial — Express Error Handler Middleware
 // ============================================
 // Must be the LAST middleware registered. Catches all unhandled errors
 // and returns a consistent JSON response.

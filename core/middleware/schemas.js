@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Request Validation Schemas
+// Neurvinial — Request Validation Schemas
 // ============================================
 // Joi schemas for validating incoming API requests.
 // Used with validateRequest middleware.

@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Telegram Notification Bot
+// Neurvinial — Telegram Notification Bot
 // ============================================
 // Sends alerts for loan lifecycle events:
 //   - Loan approved/denied
@@ -51,7 +51,7 @@ function initialize() {
 async function sendAlert(message) {
   initialize();
 
-  const formattedMessage = `🏦 SENTINEL\n${'─'.repeat(20)}\n${message}`;
+  const formattedMessage = `🏦 Neurvinial\n${'─'.repeat(20)}\n${message}`;
 
   // Always log the alert
   logger.info('Telegram alert', { message });

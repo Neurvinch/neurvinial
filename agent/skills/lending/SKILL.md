@@ -1,5 +1,5 @@
 ---
-name: sentinel_lending
+name: neurvinial_lending
 description: Process loan requests autonomously. Evaluate creditworthiness, approve or deny loans, and disburse USDT on-chain via WDK.
 ---
 

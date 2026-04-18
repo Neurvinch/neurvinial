@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Loan Lifecycle Service
+// Neurvinial — Loan Lifecycle Service
 // ============================================
 // Central business logic for the entire lending operation.
 // Manages the full lifecycle:
@@ -249,7 +249,10 @@ async function disburseLoan(loanId) {
 // =========================================================
 // Called when the borrower agent repays the loan.
 // If loan was funded by LP agent, repays them with interest.
-async function processRepayment(loanId, repaymentTxHash) {
+// Now includes ON-CHAIN VERIFICATION via WDK Indexer API!
+async function processRepayment(loanId, repaymentTxHash, options = {}) {
+  const { skipVerification = false } = options;
+
   const loan = await Loan.findOne({ loanId });
   if (!loan) {
     const err = new Error('Loan not found');
@@ -263,6 +266,69 @@ async function processRepayment(loanId, repaymentTxHash) {
   }
 
   const agent = await Agent.findOne({ did: loan.borrowerDid });
+  const treasuryAddress = await walletManager.getSentinelAddress();
+
+  // =========================================================
+  // CRITICAL: Block if same TX as disbursement
+  // =========================================================
+  if (repaymentTxHash && loan.disbursementTxHash) {
+    if (repaymentTxHash.toLowerCase() === loan.disbursementTxHash.toLowerCase()) {
+      const err = new Error('Invalid TX: This is the disbursement transaction, not a repayment. You must send USDT TO the treasury, not use the TX where we sent to you.');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  // =========================================================
+  // ON-CHAIN VERIFICATION (REQUIRED if TX hash provided)
+  // =========================================================
+  let verificationResult = null;
+  if (repaymentTxHash && repaymentTxHash.startsWith('0x') && !skipVerification) {
+    try {
+      const indexerService = require('../wdk/indexerService');
+
+      // Verify the transaction on-chain - MUST be FROM borrower TO treasury
+      verificationResult = await indexerService.verifyTransaction(repaymentTxHash, {
+        from: agent.walletAddress,  // CRITICAL: Must be from borrower
+        to: treasuryAddress,         // CRITICAL: Must be to treasury
+        minAmount: loan.totalDue * 0.95 // Allow 5% tolerance for gas/fees
+      });
+
+      logger.info('On-chain TX verification', {
+        loanId,
+        txHash: repaymentTxHash,
+        verified: verificationResult.verified,
+        reason: verificationResult.reason
+      });
+
+      // BLOCK if verification failed
+      if (!verificationResult.verified) {
+        const err = new Error(`TX verification failed: ${verificationResult.reason}. Make sure you sent USDT FROM your wallet (${agent.walletAddress}) TO the treasury (${treasuryAddress}).`);
+        err.statusCode = 400;
+        err.verificationResult = verificationResult;
+        throw err;
+      }
+    } catch (verifyErr) {
+      // If it's our verification error, rethrow it
+      if (verifyErr.statusCode === 400) {
+        throw verifyErr;
+      }
+
+      // For indexer API errors (404, network issues), provide guidance
+      logger.warn('TX verification unavailable', { error: verifyErr.message });
+      const err = new Error(`Cannot verify TX on-chain: ${verifyErr.message}. Please ensure the TX is confirmed on Etherscan and try again in a few minutes.`);
+      err.statusCode = 503;
+      throw err;
+    }
+  } else if (skipVerification) {
+    // Daemon/internal call with skipVerification - allow without full verification
+    logger.info('Repayment processing with skipVerification', { loanId, txHash: repaymentTxHash || 'auto-detected' });
+  } else if (!repaymentTxHash || !repaymentTxHash.startsWith('0x')) {
+    // No valid TX hash provided by user
+    const err = new Error('Valid transaction hash required. Send USDT to the treasury and provide the TX hash from Etherscan.');
+    err.statusCode = 400;
+    throw err;
+  }
 
   // Record the repayment transaction
   if (!repaymentTxHash) {
@@ -325,10 +391,11 @@ async function processRepayment(loanId, repaymentTxHash) {
   }
 
   const txHashToUse = repaymentTxHash;
+  const txHashToRecord = repaymentTxHash || `0xAUTO_${Date.now().toString(16)}`;
   const tx = new Transaction({
-    txHash: txHashToUse,
+    txHash: txHashToRecord,
     from: agent.walletAddress,
-    to: await walletManager.getSentinelAddress(),
+    to: treasuryAddress,
     amount: loan.totalDue,
     type: 'repayment',
     loanId: loan.loanId,
@@ -341,7 +408,7 @@ async function processRepayment(loanId, repaymentTxHash) {
 
   // Update loan status
   loan.status = LOAN_STATUSES.REPAID;
-  loan.repaymentTxHash = txHashToUse;
+  loan.repaymentTxHash = txHashToRecord;
   loan.repaidAt = new Date();
   await loan.save();
 
@@ -396,6 +463,81 @@ async function processRepayment(loanId, repaymentTxHash) {
     newTier: agent.tier,
     lpRepayment
   };
+}
+
+// =========================================================
+// STEP 4B: Process automatic repayment (send from agent wallet)
+// =========================================================
+// This function sends USDT from the borrower's wallet to treasury automatically.
+// Used when borrowers use `/repay send` command for easy repayment.
+async function processAutoRepayment(loanId) {
+  const loan = await Loan.findOne({ loanId });
+  if (!loan) {
+    const err = new Error('Loan not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (loan.status !== LOAN_STATUSES.DISBURSED) {
+    const err = new Error(`Loan is not in disbursed status (current: ${loan.status})`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const agent = await Agent.findOne({ did: loan.borrowerDid });
+  if (!agent) {
+    const err = new Error('Agent not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (!agent.walletIndex && agent.walletIndex !== 0) {
+    const err = new Error('Agent wallet index not found. Cannot send from agent wallet.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const treasuryAddress = await walletManager.getSentinelAddress();
+
+  logger.info('Processing auto-repayment', {
+    loanId,
+    agentDid: agent.did,
+    agentWalletIndex: agent.walletIndex,
+    amount: loan.totalDue,
+    treasury: treasuryAddress
+  });
+
+  try {
+    // Send USDT from agent's wallet to treasury
+    const transferResult = await walletManager.sendUSDTFromAgent(
+      agent.walletIndex,
+      treasuryAddress,
+      loan.totalDue
+    );
+
+    logger.info('Auto-repayment transfer successful', {
+      loanId,
+      txHash: transferResult.hash,
+      from: transferResult.from,
+      to: treasuryAddress,
+      amount: loan.totalDue
+    });
+
+    // Now process the repayment with the TX hash (skip verification since we just sent it)
+    return await processRepayment(loanId, transferResult.hash, { skipVerification: true });
+
+  } catch (transferErr) {
+    logger.error('Auto-repayment transfer failed', {
+      loanId,
+      error: transferErr.message
+    });
+
+    // Provide helpful error messages
+    if (transferErr.message.includes('insufficient')) {
+      throw new Error(`Insufficient USDT in your wallet. You need ${loan.totalDue} USDT to repay this loan. Your wallet: ${agent.walletAddress}`);
+    }
+
+    throw new Error(`Failed to send repayment: ${transferErr.message}`);
+  }
 }
 
 // =========================================================
@@ -529,8 +671,9 @@ async function getAgentLoans(did) {
 // HELPER: Mark loan as repaid (alias for processRepayment)
 // =========================================================
 // Used by the repayment monitor daemon for autonomous detection.
+// Daemon already verified the TX via indexer, so skip double verification.
 async function markRepaid(loanId, repaymentTxHash = null) {
-  return processRepayment(loanId, repaymentTxHash);
+  return processRepayment(loanId, repaymentTxHash, { skipVerification: true });
 }
 
 // Export as singleton object with all methods
@@ -539,6 +682,7 @@ module.exports = {
   applyDecision,
   disburseLoan,
   processRepayment,
+  processAutoRepayment,
   markDefault,
   markRepaid, // Alias for daemon compatibility
   getLoanStatus,

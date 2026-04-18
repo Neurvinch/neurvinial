@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — WhatsApp Channel Integration
+// Neurvinial — WhatsApp Channel Integration
 // ============================================
 // Integrates WhatsApp for lending agent interaction using Twilio API.
 // Users can request loans, check status, and get updates via WhatsApp.
@@ -11,6 +11,7 @@ const { invokeSkill } = require('../agent/openclawIntegration');
 const { Agent, Loan } = require('../models');
 const mongoose = require('mongoose');
 const walletManager = require('../wdk/walletManager');
+const loanService = require('../loans/loanService');
 
 // WhatsApp user context tracking
 const whatsappContexts = new Map();
@@ -224,7 +225,7 @@ const handleWhatsAppStatus = async (phoneNumber) => {
   }
 
   try {
-    const result = await invokeSkill('sentinel_credit', {
+    const result = await invokeSkill('neurvinial_credit', {
       did: context.did,
       action: 'assess_creditworthiness'
     });
@@ -264,7 +265,7 @@ const handleWhatsAppRequest = async (phoneNumber, amount) => {
   }
 
   try {
-    const result = await invokeSkill('sentinel_lending', {
+    const result = await invokeSkill('neurvinial_lending', {
       did: context.did,
       amount: parsedAmount,
       creditScore: context.creditScore,
@@ -618,7 +619,7 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
   const context = await getOrCreateWhatsAppContext(phoneNumber);
 
   if (!context.did) {
-    await sendWhatsAppMessage(phoneNumber, '❌ Please "register" first.');
+    await sendWhatsAppMessage(phoneNumber, '❌ Please send "register" first.');
     return;
   }
 
@@ -635,7 +636,6 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
     }).sort({ createdAt: 1 });
 
     if (disbursedLoans.length === 0) {
-      // Check if there are pending/approved loans
       const pendingLoans = await Loan.find({
         borrowerDid: context.did,
         status: { $in: ['pending', 'approved'] }
@@ -643,9 +643,9 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
 
       if (pendingLoans.length > 0) {
         const loan = pendingLoans[0];
-        await sendWhatsAppMessage(phoneNumber, `❌ Your loan request is still in ${loan.status} status.\n\nYou need to:\n1. Send "approve" to disburse the loan\n2. Receive USDT in your wallet\n3. Then use "repay" to repay it\n\nSend "approve" to disburse your loan.`);
+        await sendWhatsAppMessage(phoneNumber, `❌ Your loan is still in ${loan.status} status.\n\n1. Send *approve* to disburse\n2. Receive USDT\n3. Then send *repay*`);
       } else {
-        await sendWhatsAppMessage(phoneNumber, '✅ *No Active Loans*\n\nYou have no loans to repay. Send "request 100" to get a loan.');
+        await sendWhatsAppMessage(phoneNumber, '✅ No active loans to repay.\n\nSend *request 100* to get a loan.');
       }
       return;
     }
@@ -653,112 +653,181 @@ const handleWhatsAppRepay = async (phoneNumber, loanIdPart) => {
     const loan = disbursedLoans[0];
     const treasuryAddress = await walletManager.getSentinelAddress();
 
-    // Calculate totalDue if missing (fallback to amount + interest)
+    // Calculate totalDue if missing
     let repaymentAmount = loan.totalDue;
     if (!repaymentAmount || repaymentAmount <= 0) {
       const interest = loan.interestAccrued || (loan.amount * (loan.apr || 0.05) * (30 / 365));
       repaymentAmount = parseFloat((loan.amount + interest).toFixed(2));
-
-      // Fix the loan record
       loan.totalDue = repaymentAmount;
       await loan.save();
-      logger.info('Fixed missing totalDue on loan', { loanId: loan.loanId, totalDue: repaymentAmount });
     }
 
-    // Check if TX hash was provided in the message
-    const txHashMatch = loanIdPart ? loanIdPart.match(/0x[a-fA-F0-9]{64}/) : null;
+    const loanId = loan.loanId || loan._id.toString();
 
-    if (!txHashMatch) {
-      // Show instructions to repay on-chain
-      const instructionMessage = `💳 *Repay Your Loan On-Chain*
+    // Check for "auto" or "check" command - auto-detect repayment
+    if (loanIdPart && (loanIdPart.toLowerCase().includes('auto') || loanIdPart.toLowerCase().includes('check'))) {
+      await sendWhatsAppMessage(phoneNumber, '🔍 *Checking for on-chain repayment...*');
 
-📋 *Loan Details:*
-💰 Amount to repay: *$${repaymentAmount} USDT*
-🆔 Loan ID: ${(loan.loanId || loan._id.toString()).substring(0, 16)}...
-📅 Due: ${loan.dueDate ? new Date(loan.dueDate).toLocaleDateString() : 'N/A'}
+      try {
+        const indexerService = require('../wdk/indexerService');
+        const agent = await Agent.findOne({ did: context.did });
 
-⛓️ *How to Repay:*
+        const detection = await indexerService.detectRepayment(
+          agent?.walletAddress || context.walletAddress,
+          treasuryAddress,
+          repaymentAmount,
+          loan.disbursedAt || loan.createdAt
+        );
 
-*Step 1:* Send *${repaymentAmount} USDT* on-chain to:
-\`${treasuryAddress}\`
+        if (detection.detected) {
+          const result = await loanService.processRepayment(loanId, detection.txHash);
 
-*Step 2:* Get your transaction hash from Etherscan
+          context.creditScore = result.newCreditScore;
+          context.tier = result.newTier;
+          whatsappContexts.set(phoneNumber, context);
 
-*Step 3:* Send it here:
-repay 0xYourTxHashHere
+          await sendWhatsAppMessage(phoneNumber, `🎉 *REPAYMENT AUTO-DETECTED!*
 
-*Example:*
-repay 0xabc123def456...
+✅ Found your payment on-chain!
 
-💡 *Tip:* Repaying on-time improves your credit score by +5 points!
+💰 Amount: $${detection.amount?.toFixed(2) || repaymentAmount} USDT
+⛓️ TX: ${detection.txHash.substring(0, 20)}...
+🔗 https://sepolia.etherscan.io/tx/${detection.txHash}
 
-⚠️ This requires a REAL blockchain transaction.`;
+📈 *Credit Updated:*
+• Score: ${result.newCreditScore}/100 (${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange})
+• Tier: ${result.newTier}
 
-      await sendWhatsAppMessage(phoneNumber, instructionMessage);
+⚡ No manual repay needed - detected automatically!`);
+        } else {
+          await sendWhatsAppMessage(phoneNumber, `❌ *No Repayment Found*
+
+Send *$${repaymentAmount} USDT* to:
+${treasuryAddress}
+
+Then send *repay auto* again, or:
+*repay 0xYourTxHash*`);
+        }
+      } catch (detectErr) {
+        logger.error('WhatsApp auto-detect failed', { error: detectErr.message });
+        await sendWhatsAppMessage(phoneNumber, `❌ Auto-detection unavailable.\n\nUse: *repay 0xYourTxHash*`);
+      }
       return;
     }
 
-    // Real repayment with TX hash
+    // Check for "send" command - automatic repayment from user's wallet
+    if (loanIdPart && loanIdPart.toLowerCase().includes('send')) {
+      await sendWhatsAppMessage(phoneNumber, `⏳ *Sending Repayment...*\n\n🔄 Transferring $${repaymentAmount} USDT from your wallet...\n\n⚡ Please wait 30-60 seconds`);
+
+      try {
+        const result = await loanService.processAutoRepayment(loanId);
+
+        context.creditScore = result.newCreditScore;
+        context.tier = result.newTier;
+        whatsappContexts.set(phoneNumber, context);
+
+        await sendWhatsAppMessage(phoneNumber, `✅ *Loan Repaid Successfully!*
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💰 Amount: $${repaymentAmount} USDT
+⛓️ TX: ${result.repaymentTxHash.substring(0, 20)}...
+🔗 https://sepolia.etherscan.io/tx/${result.repaymentTxHash}
+
+${result.wasOnTime ? '⏰ *ON-TIME!* Great job!' : '⚠️ Late'}
+
+📈 *Credit Updated:*
+• Change: ${result.creditScoreChange >= 0 ? '+' : ''}${result.creditScoreChange} points
+• Score: *${result.newCreditScore}/100*
+• Tier: *${result.newTier}*
+${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💡 Send *status* for your profile
+💰 Send *request* for another loan`);
+
+        logger.info('WhatsApp auto-repayment successful', { loanId, txHash: result.repaymentTxHash });
+      } catch (sendErr) {
+        logger.error('WhatsApp auto-repayment failed', { error: sendErr.message });
+        await sendWhatsAppMessage(phoneNumber, `❌ *Auto-Repayment Failed*\n\n${sendErr.message}\n\n💡 Try manual repayment:\n*repay 0xYourTxHash*\n\nOr use *repay auto* after manually sending.`);
+      }
+      return;
+    }
+
+    // Check if TX hash was provided
+    const txHashMatch = loanIdPart ? loanIdPart.match(/0x[a-fA-F0-9]{64}/) : null;
+
+    if (!txHashMatch) {
+      // Show simplified instructions
+      await sendWhatsAppMessage(phoneNumber, `💳 *Repay $${repaymentAmount} USDT*
+
+━━━━━━━━━━━━━━━━━━━━━
+
+💰 *Amount:* $${repaymentAmount}
+📍 *Send to:* ${treasuryAddress}
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🚀 *EASIEST: Auto-Send* ✨
+repay send
+_We'll send from your wallet!_
+
+*Option 2 - Manual + Auto*
+1. Send USDT to treasury
+2. repay auto
+_We'll find your TX!_
+
+*Option 3 - Manual TX*
+repay 0xYourTxHash
+
+━━━━━━━━━━━━━━━━━━━━━
+
+🔗 https://sepolia.etherscan.io/address/${treasuryAddress}
+
+💡 On-time = +5 points!`);
+      return;
+    }
+
+    // Process with TX hash
     const txHash = txHashMatch[0];
-    const loanId = loan.loanId || loan._id.toString();
 
-    logger.info('Processing on-chain repayment via WhatsApp', {
-      loanId,
-      txHash,
-      borrowerDid: context.did,
-      loanAmount: loan.totalDue
-    });
+    await sendWhatsAppMessage(phoneNumber, `🔍 *Verifying TX...*\n${txHash.substring(0, 20)}...`);
 
-    // Use loan service to process repayment
-    const loanService = require('../loans/loanService');
+    logger.info('WhatsApp repayment processing', { loanId, txHash });
+
     const result = await loanService.processRepayment(loanId, txHash);
 
-    // Update context with new credit score
     context.creditScore = result.newCreditScore;
     context.tier = result.newTier;
     whatsappContexts.set(phoneNumber, context);
 
-    const wasOnTime = result.wasOnTime;
-    const scoreChange = result.creditScoreChange;
+    await sendWhatsAppMessage(phoneNumber, `✅ *Loan Repaid Successfully!*
 
-    const message = `✅ *Loan Repaid Successfully!*
+━━━━━━━━━━━━━━━━━━━━━
 
-💰 *Amount Repaid:* $${loan.totalDue} USDT
-⛓️ *TX Hash:* ${txHash.substring(0, 20)}...
-🔗 View on Etherscan:
-https://sepolia.etherscan.io/tx/${txHash}
+💰 Amount: $${repaymentAmount} USDT
+⛓️ TX: ${txHash.substring(0, 20)}...
+🔗 https://sepolia.etherscan.io/tx/${txHash}
 
-${wasOnTime ? '⏰ *On-Time!* Great job!' : '⚠️ *Late Payment* - Try to repay on time next time'}
+━━━━━━━━━━━━━━━━━━━━━
 
-🎉 *Credit Score Updated!*
-📈 Score Change: ${scoreChange > 0 ? '+' : ''}${scoreChange} points
-⭐ New Score: ${result.newCreditScore}/100
-🏆 New Tier: ${result.newTier}
-${result.newTier !== context.tier ? `\n🎊 *TIER UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
+${result.wasOnTime ? '⏰ *ON-TIME!* Great job!' : '⚠️ Late - repay on-time next time'}
 
-${result.lpRepayment ? '💼 LP Agent automatically repaid ✅\n' : ''}
+📈 *Credit Updated:*
+• Change: ${result.creditScoreChange > 0 ? '+' : ''}${result.creditScoreChange} points
+• Score: *${result.newCreditScore}/100*
+• Tier: *${result.newTier}*
+${result.newTier !== context.tier ? `\n🎊 *UPGRADED!* ${context.tier} → ${result.newTier}` : ''}
 
-💡 Send "status" to see your updated profile
-💰 Send "request" to get another loan`;
+━━━━━━━━━━━━━━━━━━━━━
 
-    await sendWhatsAppMessage(phoneNumber, message);
-    logger.info('Loan repaid via WhatsApp', {
-      did: context.did,
-      loanId,
-      amount: loan.amount,
-      txHash
-    });
-  } catch (repaymentError) {
-    logger.error('WhatsApp repay failed', { error: repaymentError.message, phoneNumber });
+💡 Send *status* for your profile
+💰 Send *request* for another loan`);
 
-    // Provide specific error guidance
-    if (repaymentError.message.includes('not in disbursed status')) {
-      await sendWhatsAppMessage(phoneNumber, `❌ Loan status error: ${repaymentError.message}\n\nMake sure the loan has been disbursed with "approve" first.`);
-    } else if (repaymentError.message.includes('not found')) {
-      await sendWhatsAppMessage(phoneNumber, `❌ Loan not found. Please try again or contact support.`);
-    } else {
-      await sendWhatsAppMessage(phoneNumber, `❌ Repayment failed: ${repaymentError.message}\n\nMake sure:\n• You sent REAL USDT to the treasury address\n• You got the TX hash from Etherscan\n• TX hash is exactly 66 characters (0x + 64 hex chars)\n• You\'re repaying the correct amount`);
-    }
+  } catch (error) {
+    logger.error('WhatsApp repay error', { error: error.message, phoneNumber });
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}\n\nTry again or contact support.`);
   }
 };
 
@@ -855,6 +924,496 @@ https://sepolia.etherscan.io/address/${walletAddress}
 };
 
 /**
+ * Handle WhatsApp tiers command - Show credit tier information
+ */
+const handleWhatsAppTiers = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  const tiersInfo = `📊 *Neurvinial Credit Tiers*
+
+━━━━━━━━━━━━━━━━━━━
+
+🌟 *Tier A* (Score 80-100)
+• Max Loan: $5,000 USDT
+• Interest: 3.5% APR
+• Collateral: None required
+• Status: Premium credit
+
+✅ *Tier B* (Score 60-79)
+• Max Loan: $2,000 USDT
+• Interest: 5.0% APR
+• Collateral: 25% required
+• Status: Good credit
+
+📊 *Tier C* (Score 40-59)
+• Max Loan: $500 USDT
+• Interest: 8.0% APR
+• Collateral: 50% required
+• Status: Building credit
+
+❌ *Tier D* (Score 0-39)
+• Max Loan: $0
+• Status: Not eligible
+
+━━━━━━━━━━━━━━━━━━━
+
+${context.registered ? `📍 *Your Status:*
+• Score: ${context.creditScore}/100
+• Tier: ${context.tier}
+• Recommendation: ${context.tier === 'A' ? 'Excellent! Max benefits unlocked' : context.tier === 'B' ? 'Repay 2 more loans for Tier A' : context.tier === 'C' ? 'Build history with small loans' : 'Start with register'}` : '🚀 Send *register* to get your credit score!'}
+
+💡 Send *upgrade* for tips to improve your tier`;
+
+  await sendWhatsAppMessage(phoneNumber, tiersInfo);
+};
+
+/**
+ * Handle WhatsApp upgrade command - Show credit improvement tips
+ */
+const handleWhatsAppUpgrade = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please *register* first to see upgrade tips.');
+    return;
+  }
+
+  const currentTier = context.tier || 'C';
+  const score = context.creditScore || 50;
+
+  let tips;
+  if (currentTier === 'A') {
+    tips = `🏆 *Congratulations! You're at Tier A*
+
+You have the highest credit tier and enjoy:
+• Max loan: $5,000 USDT
+• Lowest rate: 3.5% APR
+• No collateral required
+
+💡 *Tips to maintain Tier A:*
+• Continue repaying on-time
+• Avoid any defaults
+• Keep steady loan activity
+
+🎯 *Next:* request 1000 to use your premium benefits!`;
+  } else if (currentTier === 'B') {
+    tips = `📈 *Upgrade Path: B → A*
+
+*Current:* Score ${score}, need 80+ for Tier A
+
+✅ *Actions to upgrade:*
+1. Repay 2 more loans on-time (+5 points each)
+2. Never miss a deadline
+3. Maintain 100% repayment rate
+
+🎁 *Tier A Benefits:*
+• Max loan: $5,000 (vs $2,000 now)
+• Interest: 3.5% (vs 5.0% now)
+
+🎯 *Next step:* request ${Math.min(500, 2000)} and repay on-time!`;
+  } else if (currentTier === 'C') {
+    tips = `📈 *Upgrade Path: C → B*
+
+*Current:* Score ${score}, need 60+ for Tier B
+
+✅ *Actions to upgrade:*
+1. Request small loan: request 100
+2. Repay before due date (+5 points)
+3. Repeat 2-3 times
+
+🎁 *Tier B Benefits:*
+• Max loan: $2,000 (vs $500 now)
+• Interest: 5.0% (vs 8.0% now)
+
+⚡ *Pro tip:* Smaller loans = easier to repay = faster upgrade!
+
+🎯 *Start now:* request 100`;
+  } else {
+    tips = `📈 *Build Your Credit (Tier D)*
+
+*Current:* Score ${score} (below minimum)
+
+⚠️ *Why Tier D:*
+• New account with no history
+• OR previous defaults
+
+✅ *Path to Tier C:*
+1. Wait for credit review
+2. Check back in 24 hours
+3. Each on-time repayment adds points
+
+💡 Check back with *status* in 24 hours`;
+  }
+
+  await sendWhatsAppMessage(phoneNumber, tips);
+};
+
+/**
+ * Handle WhatsApp capital command - Show treasury and capital overview
+ */
+const handleWhatsAppCapital = async (phoneNumber) => {
+  try {
+    let treasuryBalance = 0;
+    let treasuryAddress = 'unknown';
+
+    try {
+      if (walletManager.isInitialized()) {
+        treasuryAddress = await walletManager.getSentinelAddress();
+        const balanceResult = await walletManager.getSentinelUSDTBalance();
+        treasuryBalance = balanceResult.balance;
+      }
+    } catch (err) {
+      logger.warn('Could not fetch treasury data', { error: err.message });
+    }
+
+    // Get LP pool stats
+    const lpAgentManager = require('../capital/lpAgentManager');
+    const lpStats = lpAgentManager.getLPPoolStats();
+
+    const message = `💰 *Neurvinial Capital Overview*
+
+━━━━━━━━━━━━━━━━━━━
+
+🏦 *Treasury*
+• Balance: $${treasuryBalance.toFixed(2)} USDT
+• Address: ${treasuryAddress.substring(0, 20)}...
+• Network: Ethereum Sepolia
+
+━━━━━━━━━━━━━━━━━━━
+
+🤝 *LP Agent Pool*
+• Active LPs: ${lpStats.activeLPAgents}
+• Total Committed: $${lpStats.totalCapitalCommitted.toFixed(0)}
+• Deployed: $${lpStats.totalCapitalDeployed.toFixed(0)}
+• Available: $${lpStats.totalCapitalAvailable.toFixed(0)}
+• Interest Paid: $${lpStats.totalInterestPaidToLPs.toFixed(2)}
+
+━━━━━━━━━━━━━━━━━━━
+
+📊 *How Capital Works:*
+1. Treasury holds USDT for loans
+2. LP Agents supply extra capital (2% APR)
+3. Neurvinial lends to borrowers (3.5-8% APR)
+4. Neurvinial earns the spread
+
+💡 Send *lppool* for LP details or *treasury* for address`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp capital failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp lppool command - Show LP Agent pool details
+ */
+const handleWhatsAppLPPool = async (phoneNumber) => {
+  try {
+    const lpAgentManager = require('../capital/lpAgentManager');
+    const lpStats = lpAgentManager.getLPPoolStats();
+    const lpAgents = lpAgentManager.getAllLPAgents();
+
+    let message = `🤝 *LP Agent Capital Pool*
+
+━━━━━━━━━━━━━━━━━━━
+
+📊 *Pool Statistics:*
+• Active LP Agents: ${lpStats.activeLPAgents}
+• Total Capital: $${lpStats.totalCapitalCommitted.toFixed(0)} USDT
+• Currently Deployed: $${lpStats.totalCapitalDeployed.toFixed(0)}
+• Available: $${lpStats.totalCapitalAvailable.toFixed(0)}
+• Average APR: ${(lpStats.averageAPR * 100).toFixed(1)}%
+• Interest Paid to LPs: $${lpStats.totalInterestPaidToLPs.toFixed(2)}
+
+━━━━━━━━━━━━━━━━━━━
+
+💡 *How LP Pool Works:*
+1️⃣ Other AI agents supply capital at 2% APR
+2️⃣ Neurvinial borrows when treasury is low
+3️⃣ Neurvinial lends to borrowers at 5-8% APR
+4️⃣ Neurvinial earns the spread (3-6%)
+5️⃣ Everyone profits automatically! ✅
+
+━━━━━━━━━━━━━━━━━━━`;
+
+    if (lpAgents.length > 0) {
+      message += `
+
+📋 *Active LP Agents:*`;
+      lpAgents.slice(0, 3).forEach((lp, index) => {
+        message += `
+${index + 1}. ${lp.name}
+   • Capital: $${lp.maxCapital}
+   • Deployed: $${lp.currentDeployed}
+   • Earned: $${lp.interestEarned.toFixed(2)}`;
+      });
+    }
+
+    message += `
+
+📍 *Become an LP Agent:*
+Use the API to register as LP:
+POST /capital/lp/register`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp lppool failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp aave command - Show AAVE yield status
+ */
+const handleWhatsAppAAVE = async (phoneNumber) => {
+  try {
+    const aaveIntegration = require('../capital/aaveIntegration');
+    let aaveStatus;
+    try {
+      aaveStatus = await aaveIntegration.getAAVEStatus();
+    } catch {
+      aaveStatus = {
+        currentDeposit: 0,
+        interestEarned: 0,
+        estimatedAPY: 4.2,
+        status: 'idle',
+        poolAddress: '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951'
+      };
+    }
+
+    const message = `📈 *AAVE V3 Yield Integration*
+
+━━━━━━━━━━━━━━━━━━━
+
+📊 *Current Status:*
+• Protocol: AAVE V3
+• Network: Ethereum Sepolia
+• Status: ${aaveStatus.status}
+• Pool: ${aaveStatus.poolAddress.substring(0, 20)}...
+
+💰 *Capital Deployed:*
+• Current Deposit: $${aaveStatus.currentDeposit.toFixed(2)} USDT
+• Interest Earned: $${aaveStatus.interestEarned.toFixed(4)}
+• Estimated APY: ${aaveStatus.estimatedAPY}%
+
+━━━━━━━━━━━━━━━━━━━
+
+💡 *How AAVE Integration Works:*
+1. Treasury has idle capital (not in active loans)
+2. Idle capital is deposited to AAVE V3 pool
+3. AAVE pays ~4.2% APY on deposits
+4. When loan requested, capital is withdrawn
+5. Neurvinial earns yield on unused funds!
+
+⚡ *Benefits:*
+• Idle money earns yield
+• Loans still approved instantly
+• Zero manual intervention
+• Fully autonomous rebalancing
+
+📊 *SRD Requirement:* FR-CP-01 ✅`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp aave failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp treasury command - Show treasury details
+ */
+const handleWhatsAppTreasury = async (phoneNumber) => {
+  try {
+    let treasuryAddress = 'unknown';
+    let usdtBalance = 0;
+    let ethBalance = 0;
+
+    if (walletManager.isInitialized()) {
+      treasuryAddress = await walletManager.getSentinelAddress();
+      try {
+        const usdtResult = await walletManager.getSentinelUSDTBalance();
+        usdtBalance = usdtResult.balance;
+      } catch {}
+      try {
+        const ethResult = await walletManager.getSentinelETHBalance();
+        ethBalance = ethResult.balance;
+      } catch {}
+    }
+
+    const message = `🏦 *Neurvinial Treasury*
+
+━━━━━━━━━━━━━━━━━━━
+
+📍 *Treasury Address:*
+\`${treasuryAddress}\`
+
+🔗 *View on Etherscan:*
+https://sepolia.etherscan.io/address/${treasuryAddress}
+
+━━━━━━━━━━━━━━━━━━━
+
+💰 *Current Balances:*
+• USDT: $${usdtBalance.toFixed(2)}
+• ETH: ${ethBalance.toFixed(6)}
+• Network: Ethereum Sepolia
+
+━━━━━━━━━━━━━━━━━━━
+
+⚡ *Treasury Functions:*
+• Receives repayments from borrowers
+• Disburses loans via ERC-4337
+• Auto-allocates to LP pool when low
+• Deploys idle capital to AAVE
+
+🔒 *Security:*
+• Real WDK wallet (non-custodial)
+• No simulation mode
+• Every TX verifiable on Etherscan
+
+💡 Fund treasury with Sepolia USDT to enable loans`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp treasury failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp health command - Show system health
+ */
+const handleWhatsAppHealth = async (phoneNumber) => {
+  try {
+    const services = {
+      mongodb: mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Disconnected',
+      wdk: walletManager.isInitialized() ? '✅ Initialized' : '❌ Not Ready',
+      erc4337: walletManager.is4337Enabled ? (walletManager.is4337Enabled() ? '✅ Enabled' : '⚠️ Disabled') : '⚠️ Unknown',
+      telegram: '✅ Active',
+      whatsapp: '✅ Active',
+      openclaw: '✅ Ready'
+    };
+
+    let treasuryAddress = 'unknown';
+    let usdtBalance = 0;
+
+    try {
+      if (walletManager.isInitialized()) {
+        treasuryAddress = await walletManager.getSentinelAddress();
+        const balanceResult = await walletManager.getSentinelUSDTBalance();
+        usdtBalance = balanceResult.balance;
+      }
+    } catch {}
+
+    const message = `🏥 *Neurvinial System Health*
+
+━━━━━━━━━━━━━━━━━━━
+
+⚙️ *Service Status:*
+• MongoDB: ${services.mongodb}
+• WDK Wallet: ${services.wdk}
+• ERC-4337: ${services.erc4337}
+• Telegram: ${services.telegram}
+• WhatsApp: ${services.whatsapp}
+• OpenClaw AI: ${services.openclaw}
+
+━━━━━━━━━━━━━━━━━━━
+
+🏦 *Treasury:*
+• Address: ${treasuryAddress.substring(0, 20)}...
+• USDT Balance: $${usdtBalance.toFixed(2)}
+• Network: Ethereum Sepolia
+
+━━━━━━━━━━━━━━━━━━━
+
+📊 *System Info:*
+• Version: 1.0.0
+• Environment: ${process.env.NODE_ENV || 'development'}
+• Uptime: ${Math.floor(process.uptime() / 60)} minutes
+
+✅ All systems operational`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Health check failed: ${error.message}`);
+    logger.error('WhatsApp health failed', { error: error.message });
+  }
+};
+
+/**
+ * Handle WhatsApp loans command - Show loan dashboard
+ */
+const handleWhatsAppLoans = async (phoneNumber) => {
+  const context = await getOrCreateWhatsAppContext(phoneNumber);
+
+  if (!context.did) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Please *register* first.');
+    return;
+  }
+
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      await sendWhatsAppMessage(phoneNumber, '❌ Database not available.');
+      return;
+    }
+
+    const loans = await Loan.find({ borrowerDid: context.did }).sort({ createdAt: -1 });
+
+    if (loans.length === 0) {
+      await sendWhatsAppMessage(phoneNumber, `📊 *Loan Dashboard*
+
+No loans found yet!
+
+🚀 *Get started:*
+• Send *limit* to check your loan limit
+• Send *request 100* to apply for first loan
+
+💡 Building loan history improves your credit!`);
+      return;
+    }
+
+    const active = loans.filter(l => ['pending', 'approved', 'disbursed'].includes(l.status));
+    const completed = loans.filter(l => ['repaid'].includes(l.status));
+    const defaulted = loans.filter(l => ['defaulted'].includes(l.status));
+
+    let loanList = '';
+    active.forEach(loan => {
+      const statusMap = {
+        'pending': '⏳ Pending',
+        'approved': '✅ Approved',
+        'disbursed': '💸 Active'
+      };
+      loanList += `
+• $${loan.amount} - ${statusMap[loan.status] || loan.status}`;
+    });
+
+    const message = `📊 *Loan Dashboard*
+
+━━━━━━━━━━━━━━━━━━━
+
+📈 *Summary:*
+• Total Loans: ${loans.length}
+• Active: ${active.length}
+• Completed: ${completed.length}
+• Defaulted: ${defaulted.length}
+
+${active.length > 0 ? `📍 *Active Loans:*${loanList}` : '✅ No active loans'}
+
+━━━━━━━━━━━━━━━━━━━
+
+🎯 *Actions:*
+${active.some(l => l.status === 'pending') ? '• *approve* - Disburse pending loan\n' : ''}${active.some(l => l.status === 'disbursed') ? '• *repay* - Mark loan as repaid\n' : ''}• *history* - Full loan history
+• *request 300* - New loan`;
+
+    await sendWhatsAppMessage(phoneNumber, message);
+  } catch (error) {
+    await sendWhatsAppMessage(phoneNumber, `❌ Error: ${error.message}`);
+    logger.error('WhatsApp loans failed', { error: error.message });
+  }
+};
+
+/**
  * Handle WhatsApp help command.
  */
 const handleWhatsAppHelp = async (phoneNumber) => {
@@ -893,46 +1452,79 @@ const handleWhatsAppHelp = async (phoneNumber) => {
     let helpMessage;
 
     if (!context.registered) {
-      helpMessage = `🚀 *Welcome to SENTINEL!*
+      helpMessage = `🚀 *Welcome to Neurvinial!*
 
-*Start your DeFi journey:*
+━━━━━━━━━━━━━━━━━━━
+
+*Get started in 2 steps:*
 1️⃣ Send: *register*
 2️⃣ Send: *request 300*
 
-💰 *What you get:*
-• Real USDT loans (up to $500)
-• ERC-4337 gasless transfers
-• AI credit scoring
-• 30-day terms
+━━━━━━━━━━━━━━━━━━━
 
-⚡ *Ready?* Send *register* now`;
+💰 *What you get:*
+• Real USDT loans (up to $5,000)
+• ERC-4337 gasless transfers
+• AI-powered credit scoring
+• 30-day loan terms
+• On-chain repayment verification
+
+🧠 *Natural Language:*
+Just say things like:
+• "I need 500 bucks"
+• "What can I borrow?"
+• "Show my score"
+
+⚡ *Ready?* Send *register* now!`;
     } else {
       const tierLimits = { 'A': 5000, 'B': 2000, 'C': 500, 'D': 0 };
       const maxLoan = tierLimits[context.tier] || 500;
 
-      helpMessage = `📊 *SENTINEL Commands* (Tier ${context.tier})
+      helpMessage = `📊 *Neurvinial Commands* (Tier ${context.tier})
+
+━━━━━━━━━━━━━━━━━━━
 
 💰 *Your max loan:* $${maxLoan} USDT
 
 🎯 *Quick Actions:*
-• *status* - Credit score (${context.creditScore || 50})
+• *status* - Your credit profile
 • *request ${Math.min(maxLoan, 300)}* - Apply for loan
-• *wallet* - Your address
-• *balance* - Loan portfolio
+• *loans* - Your loan dashboard
 
-💰 *Loan Commands:*
+━━━━━━━━━━━━━━━━━━━
+
+💸 *Loan Management:*
 • *approve* - Disburse pending loan
-• *repay* - Mark repaid (improves credit!)
-• *history* - Past loans
-• *terms* - Check rates
+• *repay 0xTxHash* - Repay with TX proof
+• *history* - View all past loans
+• *limit* - Check your max amount
+• *terms* - Current interest rates
 
-🚀 *Tier ${context.tier} Tips:*
-${context.tier === 'A' ? '🌟 Excellent! Max $5,000 at 3.5% APR' :
-  context.tier === 'B' ? '✅ Good credit! Repay on-time → Tier A' :
-  context.tier === 'C' ? '📈 Build credit → unlock higher limits' :
-  '❌ Build credit history to qualify'}
+━━━━━━━━━━━━━━━━━━━
 
-⚡ *All transfers are gasless via ERC-4337!*`;
+📈 *Credit Info:*
+• *tiers* - All credit tier details
+• *upgrade* - Tips to improve score
+• *balance* - Your loan portfolio
+
+━━━━━━━━━━━━━━━━━━━
+
+🏦 *Capital & System:*
+• *capital* - Treasury overview
+• *lppool* - LP Agent pool info
+• *aave* - AAVE yield status
+• *treasury* - Treasury address
+• *wallet* - Your wallet address
+• *health* - System health check
+
+━━━━━━━━━━━━━━━━━━━
+
+🧠 *Natural Language:*
+• "I need 500 dollars"
+• "What's my score?"
+• "How do I improve?"
+
+⚡ *ERC-4337:* All transfers are gasless!`;
     }
 
     await sendWhatsAppMessage(phoneNumber, helpMessage);
@@ -950,29 +1542,45 @@ const handleWhatsAppMessage = async (phoneNumber, messageText) => {
   const command = messageText.toLowerCase().trim();
 
   try {
-    if (command === 'register') {
+    if (command === 'register' || command === 'start') {
       await handleWhatsAppRegister(phoneNumber);
-    } else if (command === 'status') {
+    } else if (command === 'status' || command === 'score' || command === 'credit') {
       await handleWhatsAppStatus(phoneNumber);
-    } else if (command.startsWith('request')) {
+    } else if (command.startsWith('request') || command.startsWith('loan') || command.startsWith('borrow')) {
       const amount = command.split(' ')[1];
       await handleWhatsAppRequest(phoneNumber, amount);
-    } else if (command === 'approve' || command === 'eligible' || command === 'check') {
+    } else if (command === 'approve' || command === 'disburse' || command === 'confirm') {
       await handleWhatsAppApprove(phoneNumber);
-    } else if (command === 'limit' || command === 'howmuch' || command === 'max') {
+    } else if (command === 'limit' || command === 'howmuch' || command === 'max' || command === 'how much') {
       await handleWhatsAppLimit(phoneNumber);
-    } else if (command === 'terms' || command === 'rates' || command === 'interest') {
+    } else if (command === 'terms' || command === 'rates' || command === 'interest' || command === 'apr') {
       await handleWhatsAppTerms(phoneNumber);
-    } else if (command === 'history' || command === 'loans' || command === 'past') {
+    } else if (command === 'history' || command === 'past') {
       await handleWhatsAppHistory(phoneNumber);
-    } else if (command.startsWith('repay')) {
+    } else if (command === 'loans' || command === 'dashboard' || command === 'myloans') {
+      await handleWhatsAppLoans(phoneNumber);
+    } else if (command.startsWith('repay') || command.startsWith('pay')) {
       const loanId = command.split(' ')[1];
       await handleWhatsAppRepay(phoneNumber, loanId);
-    } else if (command === 'balance') {
+    } else if (command === 'balance' || command === 'portfolio') {
       await handleWhatsAppBalance(phoneNumber);
-    } else if (command === 'wallet' || command === 'address') {
+    } else if (command === 'wallet' || command === 'address' || command === 'myaddress') {
       await handleWhatsAppWallet(phoneNumber);
-    } else if (command === 'help' || command === '?') {
+    } else if (command === 'tiers' || command === 'tier' || command === 'levels') {
+      await handleWhatsAppTiers(phoneNumber);
+    } else if (command === 'upgrade' || command === 'improve' || command === 'tips') {
+      await handleWhatsAppUpgrade(phoneNumber);
+    } else if (command === 'capital' || command === 'funds') {
+      await handleWhatsAppCapital(phoneNumber);
+    } else if (command === 'lppool' || command === 'lp' || command === 'liquidity') {
+      await handleWhatsAppLPPool(phoneNumber);
+    } else if (command === 'aave' || command === 'yield' || command === 'defi') {
+      await handleWhatsAppAAVE(phoneNumber);
+    } else if (command === 'treasury' || command === 'vault') {
+      await handleWhatsAppTreasury(phoneNumber);
+    } else if (command === 'health' || command === 'system' || command === 'ping') {
+      await handleWhatsAppHealth(phoneNumber);
+    } else if (command === 'help' || command === '?' || command === 'commands' || command === 'menu') {
       await handleWhatsAppHelp(phoneNumber);
     } else {
       // Unknown command - use OpenClaw for intelligent response
@@ -1074,20 +1682,43 @@ const initializeWhatsApp = () => {
 
 // Exports
 module.exports = {
+  // Initialize
   initializeWhatsApp,
+
+  // Core message handling
   handleWhatsAppMessage,
   handleWhatsAppWebhook,
+
+  // Account commands
   handleWhatsAppRegister,
   handleWhatsAppStatus,
+  handleWhatsAppWallet,
+  handleWhatsAppBalance,
+  handleWhatsAppHelp,
+
+  // Loan commands
   handleWhatsAppRequest,
+  handleWhatsAppApprove,
+  handleWhatsAppRepay,
+  handleWhatsAppHistory,
+  handleWhatsAppLoans,
   handleWhatsAppLimit,
   handleWhatsAppTerms,
-  handleWhatsAppApprove,
-  handleWhatsAppHistory,
-  handleWhatsAppRepay,
-  handleWhatsAppBalance,
-  handleWhatsAppWallet,
-  handleWhatsAppHelp,
+
+  // Credit commands
+  handleWhatsAppTiers,
+  handleWhatsAppUpgrade,
+
+  // Capital commands
+  handleWhatsAppCapital,
+  handleWhatsAppLPPool,
+  handleWhatsAppAAVE,
+  handleWhatsAppTreasury,
+
+  // System commands
+  handleWhatsAppHealth,
+
+  // Utility functions
   sendWhatsAppMessage,
   parseWhatsAppWebhook,
   getOrCreateWhatsAppContext

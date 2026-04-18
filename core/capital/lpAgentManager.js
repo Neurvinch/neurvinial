@@ -1,16 +1,16 @@
 // ============================================
-// SENTINEL — LP Agent Manager (Agent-to-Agent Lending)
+// Neurvinial — LP Agent Manager (Agent-to-Agent Lending)
 // ============================================
-// Manages Liquidity Provider (LP) agents that supply capital to SENTINEL.
+// Manages Liquidity Provider (LP) agents that supply capital to Neurvinial.
 //
 // SRD Requirement: FR-CP-02
 // "Liquidity Pool Agent (separate WDK wallet) shall supply capital to Sentinel on request"
 //
 // How it works:
-// 1. LP Agent registers with SENTINEL, providing capital
-// 2. SENTINEL uses LP capital to fund loans to borrowers
-// 3. SENTINEL repays LP with interest from borrower repayments
-// 4. SENTINEL earns the spread (borrower APR - LP APR)
+// 1. LP Agent registers with Neurvinial, providing capital
+// 2. Neurvinial uses LP capital to fund loans to borrowers
+// 3. Neurvinial repays LP with interest from borrower repayments
+// 4. Neurvinial earns the spread (borrower APR - LP APR)
 
 const { Agent, Loan } = require('../models');
 const walletManager = require('../wdk/walletManager');
@@ -42,7 +42,7 @@ async function registerLPAgent({ did, walletAddress, maxCapital, apr = 0.02, nam
     name,
     maxCapital,
     currentDeployed: 0,
-    apr, // Rate SENTINEL pays to LP (2% default)
+    apr, // Rate Neurvinial pays to LP (2% default)
     interestEarned: 0,
     status: 'active',
     registeredAt: new Date(),
@@ -63,7 +63,7 @@ async function registerLPAgent({ did, walletAddress, maxCapital, apr = 0.02, nam
 
 /**
  * Request capital from LP agents
- * Called when SENTINEL treasury is low and needs to fund a loan
+ * Called when Neurvinial treasury is low and needs to fund a loan
  * @param {number} amount - Amount needed
  * @returns {Object} Capital request result
  */
@@ -74,7 +74,7 @@ async function requestCapitalFromLP(amount) {
 
     const available = lp.maxCapital - lp.currentDeployed;
     if (available >= amount) {
-      // In production: Execute real WDK transfer from LP wallet to SENTINEL treasury
+      // In production: Execute real WDK transfer from LP wallet to Neurvinial treasury
       // For demo: Track the capital deployment
 
       lp.currentDeployed += amount;
@@ -105,10 +105,10 @@ async function requestCapitalFromLP(amount) {
 
 /**
  * Repay LP agent when borrower repays loan
- * SENTINEL keeps the spread (borrower APR - LP APR)
+ * Neurvinial keeps the spread (borrower APR - LP APR)
  * @param {string} lpAgentId - LP agent ID
  * @param {number} principal - Principal amount returned
- * @param {number} interest - Interest earned by SENTINEL
+ * @param {number} interest - Interest earned by Neurvinial
  */
 async function repayLPAgent(lpAgentId, principal, interest) {
   const lp = lpAgents.get(lpAgentId);

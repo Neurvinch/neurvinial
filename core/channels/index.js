@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Channels Coordinator
+// Neurvinial — Channels Coordinator
 // ============================================
 // Manages communication channels for Sentinel AI Lending Agent.
 //

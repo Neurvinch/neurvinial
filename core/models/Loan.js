@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Loan Model (MongoDB Schema)
+// Neurvinial — Loan Model (MongoDB Schema)
 // ============================================
 // Tracks the full lifecycle of every loan from request to repayment/default.
 // The status enum maps exactly to the loan lifecycle diagram.

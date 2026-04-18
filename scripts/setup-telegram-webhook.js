@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================
-// SENTINEL — Telegram Webhook Setup
+// Neurvinial — Telegram Webhook Setup
 // ============================================
 // Run this script to configure Telegram webhook for production
 

@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — In-Memory Data Store
+// Neurvinial — In-Memory Data Store
 // ============================================
 // Powers ALL endpoints when MongoDB is unavailable.
 // Data survives for the life of the process only.

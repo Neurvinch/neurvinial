@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Agent API Routes (PRODUCTION ONLY)
+// Neurvinial — Agent API Routes (PRODUCTION ONLY)
 // ============================================
 // POST /agents/register  — Register a new agent DID
 // GET  /agents/:did/score — Fetch credit score + tier for a given DID
@@ -22,7 +22,7 @@ function requireDB(req, res, next) {
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({
       error: {
-        message: 'Database not connected. SENTINEL requires MongoDB for production operations.',
+        message: 'Database not connected. Neurvinial requires MongoDB for production operations.',
         code: 'DB_NOT_CONNECTED'
       }
     });

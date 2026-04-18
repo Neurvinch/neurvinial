@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — Main Express Server Entry Point
+// Neurvinial — Main Express Server Entry Point
 // ============================================
 // This is the orchestration hub. Responsibilities in exact order:
 // 1. Load environment variables

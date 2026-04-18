@@ -1,5 +1,5 @@
 // ============================================
-// SENTINEL — OpenClaw API Routes
+// Neurvinial — OpenClaw API Routes
 // ============================================
 // Exposes OpenClaw agent skills via REST API.
 // Allows external agents to invoke Sentinel's skills.
