@@ -265,7 +265,66 @@ async function processRepayment(loanId, repaymentTxHash) {
   const agent = await Agent.findOne({ did: loan.borrowerDid });
 
   // Record the repayment transaction
-  const txHashToUse = repaymentTxHash || `0xREPAY_${Date.now().toString(16)}`;
+  if (!repaymentTxHash) {
+    const err = new Error('No repayment transaction hash provided');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Verify the transaction exists and includes a token transfer to the Sentinel treasury
+  let receipt;
+  try {
+    receipt = await walletManager.getTransactionReceipt(repaymentTxHash);
+  } catch (err) {
+    const e = new Error(`Failed to fetch transaction receipt: ${err.message}`);
+    e.statusCode = 502;
+    throw e;
+  }
+
+  if (!receipt || (receipt && (receipt.status === 0 || receipt.confirmations === 0))) {
+    const err = new Error('Transaction not found or not confirmed on-chain');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Check logs for ERC-20 Transfer to our treasury address
+  const sentinelAddress = (await walletManager.getSentinelAddress()).toLowerCase();
+  const paddedSentinel = `0x${'0'.repeat(24)}${sentinelAddress.replace(/^0x/, '')}`.toLowerCase();
+
+  // Keccak-256 hash of "Transfer(address,address,uint256)"
+  const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+  let foundTransfer = false;
+  try {
+    if (Array.isArray(receipt.logs)) {
+      for (const log of receipt.logs) {
+        if (!log.topics || log.topics.length === 0) continue;
+        if (log.topics[0].toLowerCase() !== TRANSFER_TOPIC) continue;
+        // topics[2] is the `to` address for ERC-20 Transfer
+        const topicTo = (log.topics[2] || '').toLowerCase();
+        if (topicTo === paddedSentinel) {
+          // Parse amount from data (hex) and compare with expected amount
+          const rawAmountHex = log.data || '0x0';
+          const rawAmount = BigInt(rawAmountHex);
+          const amountExpectedBase = BigInt(Math.round((loan.totalDue || 0) * 1e6));
+          if (rawAmount >= amountExpectedBase) {
+            foundTransfer = true;
+            break;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn('Error parsing receipt logs for transfer verification', { error: err.message, tx: repaymentTxHash });
+  }
+
+  if (!foundTransfer) {
+    const err = new Error('Transaction does not include a verified USDT transfer to the treasury for the expected amount');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const txHashToUse = repaymentTxHash;
   const tx = new Transaction({
     txHash: txHashToUse,
     from: agent.walletAddress,
